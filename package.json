@@ -1,0 +1,13 @@
+{
+  "name": "pocket-gridiron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A retro arcade American football + franchise game for mobile and desktop browsers. No build step.",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server . -p 8080 -c-1",
+    "test": "node --test tests/unit/*.test.js",
+    "e2e": "node tests/e2e/run.mjs"
+  },
+  "license": "MIT"
+}
