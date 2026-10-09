@@ -100,12 +100,19 @@ function remainingSeasonFraction(save) {
  * cap as dead money; team morale dips slightly.
  * @returns {{ok:true, deadMoney:number, player:Object} | {ok:false, reason:string, message:string}}
  */
+/** Dead money ($K) releasing this player now would leave on this season's cap (UI preview). */
+export function releaseCost(save, id) {
+  const p = userTeam(save).roster.find((x) => x.id === id);
+  if (!p) return 0;
+  return Math.round((p.contract.salary * SALARY.deadMoneyFraction * remainingSeasonFraction(save)) / 100) * 100;
+}
+
 export function releasePlayer(save, id) {
   const team = userTeam(save);
   const idx = team.roster.findIndex((p) => p.id === id);
   if (idx < 0) return fail('notFound', 'Player not found.');
   const p = team.roster[idx];
-  const dead = Math.round((p.contract.salary * SALARY.deadMoneyFraction * remainingSeasonFraction(save)) / 100) * 100;
+  const dead = releaseCost(save, id);
   save.deadMoney = (save.deadMoney || 0) + dead;
   team.roster.splice(idx, 1);
   for (const o of team.roster) o.morale = clamp(o.morale + MORALE.releaseTeamPenalty, 0, 100);
@@ -221,12 +228,22 @@ export function boostTeamMorale(save) {
 
 const weekKey = (save) => `${save.season.year}-${save.season.phase}-${save.season.week}`;
 
-/** Spend CC to take a week off an injury (once per player per week). */
-export function rushTreatment(save, playerId) {
+/** Whether rush treatment is allowed right now (UI uses this to enable the button). */
+export function canRushTreatment(save, playerId) {
   const p = findPlayer(save, playerId);
   if (!p) return fail('notFound', 'Player not found.');
   if (!p.injury) return fail('healthy', `${shortName(p)} is not injured.`);
+  if (p.injury.seasonEnding) return fail('seasonEnding', 'Season-ending injuries cannot be rushed.');
   if (p.rushWeek === weekKey(save)) return fail('used', 'Already treated this week.');
+  if (save.cc < INJURY.rushCost) return fail('cc', `Need ${INJURY.rushCost} CC.`);
+  return { ok: true, cost: INJURY.rushCost };
+}
+
+/** Spend CC to take a week off an injury (once per player per week). */
+export function rushTreatment(save, playerId) {
+  const check = canRushTreatment(save, playerId);
+  if (!check.ok) return check;
+  const p = findPlayer(save, playerId);
   if (!spendCc(save, INJURY.rushCost)) return fail('cc', `Need ${INJURY.rushCost} CC.`);
   p.rushWeek = weekKey(save);
   p.injury.weeks -= 1;

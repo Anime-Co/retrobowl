@@ -123,7 +123,7 @@ export function playerRow(app, save, p, o) {
   h('span.prow-side',
     starRow(F.stars(p), { scale: 1.5 }),
     h('span.prow-status',
-      p.injury ? h('span.chip.warn', { title: F.injuryText(p) }, p.injury.weeks >= 20 ? 'OUT' : `INJ ${p.injury.weeks}W`) : role === 'bench' ? h('span.chip', 'Bench') : null,
+      p.injury ? h('span.chip.warn', { title: F.injuryText(p) }, p.injury.seasonEnding || p.injury.weeks >= 20 ? 'OUT' : `INJ ${p.injury.weeks}W`) : role === 'bench' ? h('span.chip', 'Bench') : null,
       h('span.cond', { title: `Condition ${cond}% (${F.conditionLabel(cond)})`, class: cond < 60 ? 'low' : null }, `${cond}%`),
       playerFace(p, 1.5),
     ),

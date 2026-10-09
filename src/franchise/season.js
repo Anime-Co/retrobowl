@@ -138,6 +138,11 @@ function expectedResult(save, g, r = teamRatings(save, save.userTeamId)) {
  * @param {{coachName?:string, teamId?:string, seed?:number, difficulty?:string|number, year?:number}} opts
  * @returns {Save}
  */
+/** League as newFranchise(seed) will create it (for the team picker before a career exists). */
+export function previewLeague(seed) {
+  return createTeams(new Rng((seed >>> 0) || 1));
+}
+
 export function newFranchise({ coachName = 'Coach', teamId, seed = 1, difficulty = 'dynamic', year = START_YEAR } = {}) {
   const s = (seed >>> 0) || 1;
   const rng = new Rng(s);
@@ -307,8 +312,8 @@ function injure(save, rng, p) {
     weeks = Math.max(1, Math.round(rng.weighted(INJURY.weeks, INJURY.weekWeights) * rehabInjuryMult(save)));
     type = rng.pick(INJURY.types);
   }
-  p.injury = { weeks, type };
-  return { playerId: p.id, weeks, type };
+  p.injury = seasonEnding ? { weeks, type, seasonEnding: true } : { weeks, type };
+  return { playerId: p.id, weeks, type, seasonEnding };
 }
 
 /**
@@ -773,7 +778,8 @@ export function advanceWeek(save) {
       if (!isAlive(save, save.userTeamId)) finishPlayoffsAndOffseason(save, rng, results);
     }
   }
-  expireNews(save);
+  // A phase change jumps the week counter; give post-game events from the last game a full week.
+  if (save.season.phase === phase0) expireNews(save);
   commitRng(save, rng);
   const pl = save.season.playoffs;
   return {

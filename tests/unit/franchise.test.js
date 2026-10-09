@@ -685,3 +685,21 @@ test('any star beats a generic filler on key attributes', () => {
     for (const p of all.filter((x) => x.id)) assert.ok(p[key[p.pos]] > fillerMax - 0.02, `${p.pos} ${p[key[p.pos]]} vs filler ${fillerMax}`);
   }
 });
+
+test('release cost preview and rush-treatment checks match the actions', () => {
+  const save = F.newFranchise({ coachName: 'T', teamId: 'BOS', seed: 5 });
+  const p = F.roster(save)[1];
+  const preview = F.releaseCost(save, p.id);
+  const r = F.releasePlayer(save, p.id);
+  assert.equal(r.deadMoney, preview);
+  const q = F.roster(save)[0];
+  assert.equal(F.canRushTreatment(save, q.id).reason, 'healthy');
+  q.injury = { weeks: 30, type: 'Broken leg', seasonEnding: true };
+  assert.equal(F.canRushTreatment(save, q.id).reason, 'seasonEnding');
+  q.injury = { weeks: 3, type: 'Sprain' };
+  save.cc = 50;
+  assert.equal(F.canRushTreatment(save, q.id).ok, true);
+  assert.equal(F.rushTreatment(save, q.id).ok, true);
+  assert.equal(F.canRushTreatment(save, q.id).reason, 'used');
+  assert.deepEqual(F.previewLeague(77).map((t) => [t.id, t.off, t.def]), F.newFranchise({ teamId: 'BOS', seed: 77 }).teams.map((t) => [t.id, t.off, t.def]));
+});

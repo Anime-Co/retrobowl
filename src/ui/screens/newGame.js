@@ -2,7 +2,7 @@
 
 import { h } from '../dom.js';
 import * as F from '../../franchise/index.js';
-import { Rng, freshSeed } from '../../core/rng.js';
+import { freshSeed } from '../../core/rng.js';
 import { CONFERENCES, DIVISIONS } from '../../data/teams.js';
 import { btn, helmet, starRow, screenHeader, screenKeys, setVars, teamVars, teamTag } from './common.js';
 
@@ -25,7 +25,7 @@ export class NewGameScreen {
     this.teamId = null;
     this.difficulty = 'dynamic';
     // Same seed => the league that newFranchise() builds has exactly these AI ratings.
-    this.teams = F.createTeams(new Rng(this.seed));
+    this.teams = F.previewLeague(this.seed);
     const preview = F.newFranchise({ coachName: 'Preview', teamId: this.teams[0].id, seed: this.seed });
     this.squad = F.teamRatings(preview);
     this.squadSize = F.roster(preview).length;

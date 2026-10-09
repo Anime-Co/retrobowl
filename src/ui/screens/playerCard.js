@@ -8,13 +8,9 @@ import { userTeam } from '../../franchise/state.js';
 import { openSheet, starRow, segBar, btn, money, plural, confirmDialog, segmented, progress, icon } from './common.js';
 import { STAT_ROWS, xpBlock, playerFace } from './widgets.js';
 
-const weekKey = (save) => `${save.season.year}-${save.season.phase}-${save.season.week}`;
-
-/** Dead money a release would leave on this season's cap (mirrors economy.releasePlayer). */
+/** Dead money a release would leave on this season's cap. */
 export function releaseDeadMoney(save, p) {
-  const ph = save.season.phase;
-  const frac = ph === 'offseason' ? 1 : ph === 'playoffs' ? 0 : Math.max(0, Math.min(1, (F.LEAGUE.regularWeeks - save.season.week + 1) / F.LEAGUE.regularWeeks));
-  return Math.round((p.contract.salary * F.SALARY.deadMoneyFraction * frac) / 100) * 100;
+  return F.releaseCost(save, p.id);
 }
 
 function hashId(id) {
@@ -120,7 +116,8 @@ export function openPlayerCard(app, save, playerId, o = {}) {
       ));
 
       // Status: morale, condition, injury
-      const rushUsed = p.rushWeek === weekKey(save);
+      const rushCheck = p.injury ? F.canRushTreatment(save, p.id) : null;
+      const rushUsed = !!rushCheck && rushCheck.reason === 'used';
       body.appendChild(h('section.pc-sec.pc-status',
         h('div.pc-line',
           playerFace(p, 2.5),
@@ -147,7 +144,7 @@ export function openPlayerCard(app, save, playerId, o = {}) {
             toast(r.weeks ? `Back in ${plural(r.weeks, 'week')}` : `${F.shortName(p)} is cleared to play!`);
             changed();
             api.rebuild();
-          }, { small: true, sfx: false, disabled: rushUsed || save.cc < F.INJURY.rushCost || p.injury.weeks >= 20, title: rushUsed ? 'Already treated this week' : '-1 week', attrs: { 'data-fk': 'pc-rush' } }),
+          }, { small: true, sfx: false, disabled: !rushCheck || !rushCheck.ok, title: rushCheck && !rushCheck.ok ? rushCheck.message : '-1 week', attrs: { 'data-fk': 'pc-rush' } }),
         ) : null,
       ));
 

@@ -35,6 +35,7 @@ export {
   payroll, capUsage, capRoom, gameCc, contractDemand, canExtend, extendContract, releasePlayer,
   facilityUpgradeCost, upgradeFacility, facilitySummary, coordinatorCandidates, hireCoordinator,
   boostMorale, boostTeamMorale, rushTreatment, trainingXpMult, rehabInjuryMult, weeklyRecovery,
+  releaseCost, canRushTreatment,
 } from './economy.js';
 
 export {
@@ -61,5 +62,5 @@ export {
   newFranchise, currentWeekGames, userGameThisWeek, nextUserGame, userWeekStatus, opponentOf,
   simulateOtherGames, applyUserGameResult, simulateUserGame, matchSetup, advanceWeek, expectedWins,
   offseasonSteps, currentOffseasonStep, offseasonData, runOffseasonStep, jobOffers, takeJob,
-  hubSummary, careerHistory, resultLabel,
+  hubSummary, careerHistory, resultLabel, previewLeague,
 } from './season.js';
