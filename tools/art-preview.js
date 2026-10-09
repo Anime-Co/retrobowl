@@ -1,6 +1,6 @@
 // Standalone art preview: live field scene + sprite / ball / font galleries.
 // URL params: ?o=portrait|landscape (force orientation), ?x=<yard> (camera x), ?y=<yard> (camera
-//             y, clamped like the game camera), ?ui=0 (hide bar),
+//             y, clamped like the game camera), ?ui=0 (hide bar), ?m=1 (mirrored camera: drive left),
 //             ?t=<seconds> (freeze the live scene at a time), ?teams=BOS,CHI
 // Exposes window.__preview = { ready, fieldMs, ... } once everything has been drawn.
 
@@ -63,6 +63,7 @@ for (const b of document.querySelectorAll('[data-o]')) {
 
 const display = new Display(document.getElementById('view'));
 const camera = new Camera();
+camera.mirror = params.get('m') === '1';
 const field = new FieldRenderer();
 field.setTeams(HOME, AWAY);
 const fx = new Fx();
@@ -70,6 +71,14 @@ let camX = startX;
 const yard = document.getElementById('yard');
 yard.value = String(camX);
 yard.addEventListener('input', () => { camX = Number(yard.value); });
+const mirrorBtn = document.getElementById('mirror');
+if (mirrorBtn) {
+  mirrorBtn.setAttribute('aria-pressed', String(camera.mirror));
+  mirrorBtn.addEventListener('click', () => {
+    camera.mirror = !camera.mirror;
+    mirrorBtn.setAttribute('aria-pressed', String(camera.mirror));
+  });
+}
 let paused = false;
 document.getElementById('pause').addEventListener('click', (e) => {
   paused = !paused;

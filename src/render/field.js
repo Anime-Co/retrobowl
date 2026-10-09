@@ -1,8 +1,9 @@
 // Field renderer (original pixel-art look) for both orientations.
 //
 // The static field (turf stripes, lines, hashes, numbers, end zones, apron, wall, stands) is
-// pre-rendered once per (orientation, ppy, yScale, teams) into an offscreen canvas laid out in
-// SCREEN orientation, so text reads upright and each frame is a single cropped blit. The crowd is
+// pre-rendered once per (orientation, mirror, ppy, yScale, teams) into an offscreen canvas laid
+// out in SCREEN orientation, so text reads upright (also when the camera is mirrored for a drive
+// to the left) and each frame is a single cropped blit. The crowd is
 // a few precomputed opaque stand strips (one per bob frame) blitted over the stands area. The
 // line of scrimmage, first-down line and goal posts are drawn live on top.
 
@@ -12,7 +13,9 @@ import { darken, lighten, luma, SKIN_TONES } from './sprites.js';
 
 /** @typedef {import('../types.js').TeamLook} TeamLook */
 
-const PAD = 8; // yards of surroundings pre-rendered beyond each field edge
+const PAD = 8; // yards of surroundings pre-rendered beyond each sideline
+const PAD_X = 13; // ... and beyond each end line (portrait kicks look past the uprights)
+const CACHE_SIZE = 2; // pre-renders kept (e.g. normal zoom + a wider field-goal framing)
 const BORDER = 0.35; // white boundary band (yards)
 const APRON = 0.65; // sideline/end-line apron between the border and the wall
 const WALL = 0.45; // padded wall
@@ -66,15 +69,16 @@ function hexRgb(hex) {
 
 /**
  * World->canvas mapping for a pre-render (screen-oriented).
- * landscape: +x right, +y down. portrait: +x up, +y right.
+ * landscape: +x right, +y down. portrait: +x up, +y right. `mirror` reverses the x axis.
  */
 class Mapper {
-  constructor(orientation, ppy, yScale) {
+  constructor(orientation, ppy, yScale, mirror = false) {
     this.o = orientation;
     this.ppy = ppy;
     this.ys = yScale;
-    this.X0 = -PAD;
-    this.X1 = FIELD_LEN + PAD;
+    this.mirror = !!mirror;
+    this.X0 = -PAD_X;
+    this.X1 = FIELD_LEN + PAD_X;
     this.Y0 = -PAD;
     this.Y1 = FIELD_W + PAD;
     const lenPx = Math.round((this.X1 - this.X0) * ppy);
@@ -84,7 +88,20 @@ class Mapper {
 
   /** along-field coordinate in px (canvas axis depends on orientation) */
   ax(x) {
-    return this.o === 'landscape' ? Math.round((x - this.X0) * this.ppy) : Math.round((this.X1 - x) * this.ppy);
+    // landscape: x grows rightward (leftward when mirrored); portrait: x grows upward (downward)
+    const fwd = (this.o === 'landscape') !== this.mirror;
+    return fwd ? Math.round((x - this.X0) * this.ppy) : Math.round((this.X1 - x) * this.ppy);
+  }
+
+  /** World x that sits at canvas coordinate 0 along the field axis. */
+  originX() {
+    return (this.o === 'landscape') !== this.mirror ? this.X0 : this.X1;
+  }
+
+  /** Screen direction ('left'|'right'|'up'|'down') of decreasing world x (toward the own goal). */
+  ownDir() {
+    if (this.o === 'landscape') return this.mirror ? 'right' : 'left';
+    return this.mirror ? 'up' : 'down';
   }
 
   /** cross-field coordinate in px */
@@ -162,6 +179,7 @@ export class FieldRenderer {
     this._static = null;
     this._crowd = null; // [{x, y, frames:[canvas]}]
     this._map = null;
+    this._cache = new Map(); // key -> {static, crowd, map} (LRU, CACHE_SIZE entries)
     this.buildMs = 0;
   }
 
@@ -172,26 +190,45 @@ export class FieldRenderer {
    * @param {TeamLook} awayLook
    */
   setTeams(homeLook, awayLook) {
-    this.home = { ...DEFAULT_HOME, ...(homeLook || {}) };
-    this.away = { ...DEFAULT_AWAY, ...(awayLook || {}) };
-    this._key = '';
+    const home = { ...DEFAULT_HOME, ...(homeLook || {}) };
+    const away = { ...DEFAULT_AWAY, ...(awayLook || {}) };
+    // keep the pre-render when nothing visible changed (a renderer can be shared across plays)
+    if (lookKey(home) === lookKey(this.home) && lookKey(away) === lookKey(this.away) && this._static) return;
+    this.home = home;
+    this.away = away;
+    this.invalidate();
   }
 
   /** Force a rebuild of the static layer on the next draw. */
   invalidate() {
     this._key = '';
+    this._cache.clear();
   }
 
   _ensure(camera) {
-    const key = `${camera.orientation}|${camera.ppy}|${camera.yScale}|${lookKey(this.home)}|${lookKey(this.away)}`;
+    const mirror = !!camera.mirror;
+    const key = `${camera.orientation}|${mirror}|${camera.ppy}|${camera.yScale}|${lookKey(this.home)}|${lookKey(this.away)}`;
     if (key === this._key && this._static) return;
-    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-    const m = new Mapper(camera.orientation, camera.ppy, camera.yScale);
-    this._map = m;
-    this._static = this._buildStatic(m);
-    this._crowd = this._buildCrowd(m);
+    let e = this._cache.get(key);
+    if (e) {
+      this._cache.delete(key); // refresh LRU order
+    } else {
+      const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+      const m = new Mapper(camera.orientation, camera.ppy, camera.yScale, mirror);
+      e = { map: m, static: this._buildStatic(m), crowd: this._buildCrowd(m) };
+      this.buildMs = (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
+      while (this._cache.size >= CACHE_SIZE) this._cache.delete(this._cache.keys().next().value);
+    }
+    this._cache.set(key, e);
+    this._map = e.map;
+    this._static = e.static;
+    this._crowd = e.crowd;
     this._key = key;
-    this.buildMs = (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
+  }
+
+  /** Pre-render now for a camera (e.g. while a menu is up) so the first frame doesn't stall. */
+  prepare(camera) {
+    this._ensure(camera);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -267,10 +304,16 @@ export class FieldRenderer {
     m.fill(g, fill, x0, x1, 0, FIELD_W);
     // subtle diagonal hatch for texture
     const r = m.rect(x0, x1, 0, FIELD_W);
-    g.fillStyle = darken(fill, 0.9);
-    for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x + ((y - r.y) % 6); x < r.x + r.w; x += 6) g.fillRect(x, y, 1, 1);
-    }
+    // (a 6x6 diagonal tile as a pattern: one fill instead of thousands of 1px rects)
+    const tile = makeCanvas(6, 6);
+    const tg = tile.getContext('2d');
+    tg.fillStyle = darken(fill, 0.9);
+    for (let k = 0; k < 6; k++) tg.fillRect(k, k, 1, 1);
+    g.save();
+    g.translate(r.x, r.y);
+    g.fillStyle = g.createPattern(tile, 'repeat');
+    g.fillRect(0, 0, r.w, r.h);
+    g.restore();
     // inner border
     const inset = Math.max(2, Math.round(m.ppy * 0.45));
     const ink = endZoneInk(look);
@@ -352,36 +395,40 @@ export class FieldRenderer {
     const scale = Math.max(1, Math.round((m.o === 'landscape' ? m.ppy * m.ys : m.ppy) * 2 / 7));
     const gap = Math.max(2, scale + 1); // px between a digit and the yard line
     const rows = [11.5, FIELD_W - 11.5];
+    const own = m.ownDir();
+    const opp = { left: 'right', right: 'left', up: 'down', down: 'up' }[own];
     for (let x = 20; x <= 100; x += 10) {
       const label = String(50 - Math.abs(60 - x));
-      const towardOwn = x < 60; // arrow points at the nearer goal
+      const dir = x < 60 ? own : opp; // arrow points at the nearer goal
       for (const y of rows) {
         const p = m.pt(x, y);
         const dh = 7 * scale;
         const dw = 5 * scale;
         if (m.o === 'landscape') {
-          // digits straddle the yard line: "1 | 0"
+          // digits straddle the yard line: "1 | 0" (always read left to right)
           const top = Math.round(p.y - dh / 2);
           if (label.length === 2) {
             drawText(g, label[0], p.x - gap - dw, top, { size: 'big', scale, color: ink });
             drawText(g, label[1], p.x + gap + 1, top, { size: 'big', scale, color: ink });
           }
           if (x !== 60) {
-            const ax = towardOwn ? p.x - gap - dw - scale * 2 - 1 : p.x + gap + 1 + dw + scale + 1;
-            this._arrow(g, ax, Math.round(p.y - scale), scale, towardOwn ? 'left' : 'right', ink);
+            const ax = dir === 'left' ? p.x - gap - dw - scale * 2 - 1 : p.x + gap + 1 + dw + scale + 1;
+            this._arrow(g, ax, Math.round(p.y - scale), scale, dir, ink);
           }
         } else {
           // portrait: number centred on the line, with the line interrupted behind it
           const w = measureText(label, { size: 'big', scale }) + scale * 2;
           const left = Math.round(p.x - w / 2);
           const top = Math.round(p.y - dh / 2);
-          // the line's pixel row belongs to the band just below it on screen ([x-5, x))
-          g.fillStyle = (Math.floor((x - 15) / 5) % 2) ? F.turfB : F.turfA;
+          // the line's pixel row belongs to the band just below it on screen: [x-5, x), or
+          // [x, x+5) when the field is mirrored (x grows downward)
+          const band = m.mirror ? Math.floor((x - 10) / 5) : Math.floor((x - 15) / 5);
+          g.fillStyle = band % 2 ? F.turfB : F.turfA;
           g.fillRect(left - 1, p.y, w + 2, 1);
           drawText(g, label, Math.round(p.x), top, { size: 'big', scale, color: ink, align: 'center' });
           if (x !== 60) {
-            const ay = towardOwn ? top + dh + gap : top - gap - scale * 2;
-            this._arrow(g, Math.round(p.x - scale), ay, scale, towardOwn ? 'down' : 'up', ink);
+            const ay = dir === 'down' ? top + dh + gap : top - gap - scale * 2;
+            this._arrow(g, Math.round(p.x - scale), ay, scale, dir, ink);
           }
         }
       }
@@ -444,18 +491,23 @@ export class FieldRenderer {
     ];
     const palette = this._crowdPalette();
     const out = [];
+    const fr = m.rect(0, L, 0, W);
+    const fcx = fr.x + fr.w / 2;
+    const fcy = fr.y + fr.h / 2;
     for (const reg of regions) {
       const r = m.rect(reg.x0, reg.x1, reg.y0, reg.y1);
       if (r.w <= 0 || r.h <= 0) continue;
       // in canvas space: horizontal rows if the region's long side is horizontal
       const horizontal = r.w >= r.h;
       // which side of the strip faces the field (in canvas space), and are fans seen from behind?
-      const land = m.o === 'landscape';
-      const fieldAfter = land ? (reg.side === 'near0' || reg.side === 'end0') : (reg.side === 'near0' || reg.side === 'end1');
-      const backs = land ? reg.side === 'near1' : reg.side === 'end0';
-      const frames = [];
-      for (let f = 0; f < CROWD_FRAMES; f++) frames.push(this._crowdFrame(r, horizontal, f, palette, fieldAfter, backs, m));
-      out.push({ x: r.x, y: r.y, w: r.w, h: r.h, frames });
+      // (stands below the field on screen are nearest the camera: we see the backs of heads)
+      const fieldAfter = horizontal ? r.y + r.h / 2 < fcy : r.x + r.w / 2 < fcx;
+      const backs = horizontal && !fieldAfter;
+      // bob frame 0 now; the others are built the first time they're shown (spreads the cost)
+      const frames = [this._crowdFrame(r, horizontal, 0, palette, fieldAfter, backs, m)];
+      for (let f = 1; f < CROWD_FRAMES; f++) frames.push(null);
+      const make = (f) => this._crowdFrame(r, horizontal, f, palette, fieldAfter, backs, m);
+      out.push({ x: r.x, y: r.y, w: r.w, h: r.h, frames, make });
     }
     return out;
   }
@@ -570,7 +622,7 @@ export class FieldRenderer {
     const m = this._map;
     const vw = camera.viewW;
     const vh = camera.viewH;
-    const tl = camera.orientation === 'landscape' ? camera.toScreen(m.X0, m.Y0) : camera.toScreen(m.X1, m.Y0);
+    const tl = camera.project(m.originX(), m.Y0, 0, this._tl || (this._tl = { x: 0, y: 0 }));
     const ox = Math.round(tl.x);
     const oy = Math.round(tl.y);
     if (ox > 0 || oy > 0 || ox + m.w < vw || oy + m.h < vh) {
@@ -579,7 +631,12 @@ export class FieldRenderer {
     }
     blitClip(ctx, this._static, 0, 0, m.w, m.h, ox, oy, vw, vh);
     const fi = Math.floor((opts.time || 0) * CROWD_FPS) % CROWD_FRAMES;
-    for (const s of this._crowd) blitClip(ctx, s.frames[fi], 0, 0, s.w, s.h, ox + s.x, oy + s.y, vw, vh);
+    for (const s of this._crowd) {
+      // skip regions entirely off screen (and don't build their frames yet)
+      if (ox + s.x >= vw || oy + s.y >= vh || ox + s.x + s.w <= 0 || oy + s.y + s.h <= 0) continue;
+      const fr = s.frames[fi] || (s.frames[fi] = s.make(fi));
+      blitClip(ctx, fr, 0, 0, s.w, s.h, ox + s.x, oy + s.y, vw, vh);
+    }
 
     const t = Math.max(1, Math.round(camera.ppy / 6));
     if (opts.losX != null && Number.isFinite(opts.losX)) this._fieldLine(ctx, camera, opts.losX, FIELD_COLORS.los, t);
@@ -590,8 +647,8 @@ export class FieldRenderer {
   }
 
   _fieldLine(ctx, camera, x, color, t) {
-    const a = camera.toScreen(x, 0);
-    const b = camera.toScreen(x, FIELD_W);
+    const a = camera.project(x, 0, 0, this._la || (this._la = { x: 0, y: 0 }));
+    const b = camera.project(x, FIELD_W, 0, this._lb || (this._lb = { x: 0, y: 0 }));
     ctx.fillStyle = color;
     if (camera.orientation === 'landscape') {
       const sx = Math.round(a.x) - Math.floor(t / 2);
@@ -613,9 +670,11 @@ export class FieldRenderer {
    */
   drawPosts(ctx, camera, layer = 'all') {
     const portrait = camera.orientation !== 'landscape';
-    const nearIsFront = portrait; // in portrait the x=0 post is closest to the camera
+    // in portrait the post at the bottom of the screen (x=0, or x=120 when mirrored) is closest
+    // to the camera
+    const nearX = camera.mirror ? FIELD_LEN : 0;
     for (const [x, dir] of [[0, -1], [FIELD_LEN, 1]]) {
-      const front = nearIsFront && x === 0;
+      const front = portrait && x === nearX;
       if (layer === 'all' || (layer === 'front') === front) this._post(ctx, camera, x, dir);
     }
   }
@@ -629,7 +688,7 @@ export class FieldRenderer {
     const land = camera.orientation === 'landscape';
     // landscape: the crossbar runs along the screen's vertical axis, so draw it obliquely (the far
     // end nudged toward midfield, a 3/4 view) to separate the two vertical uprights on screen
-    const oblique = land ? 0.42 * dir * camera.ppy : 0;
+    const oblique = land ? 0.42 * dir * (camera.mirror ? -1 : 1) * camera.ppy : 0;
     const P = (x, y, z) => {
       const s = camera.toScreen(x, y, z);
       return { x: Math.round(s.x + (y - cy) * oblique), y: Math.round(s.y) };

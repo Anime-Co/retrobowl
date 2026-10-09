@@ -142,9 +142,15 @@ view.done                 // true after the post-play beat (~1.2–1.8 s after t
 view.destroy();
 ```
 
+Extra options (as implemented): `insets` ({top,right,bottom,left} CSS px covered by the HUD; may be
+a live object), `tips` / `zoom` (override settings), `keepCrowd` (destroy() leaves the crowd bed
+running), `beat` (post-play pause seconds). `update(dt, events)` accepts pre-polled input.
+Controls and feel knobs: `CONTROL` in `src/play/view/controller.js`, `VIEW` in `PlayView.js`.
+
 `IdleFieldView` (same module) draws the field with players standing at a given spot, used by
 MatchScreen behind opponent-drive text boxes and between steps: `new IdleFieldView(app,
-{losX, userLook, oppLook, driveLeft}); .update(dt); .render(alpha)`.
+{losX, userLook, oppLook, driveLeft, firstDownX?, hashY?, offense:'user'|'opp', dim?, showPlayers?,
+keepCrowd?}); .update(dt); .render(alpha)`.
 
 A dev `sandbox` screen (`src/play/view/SandboxScreen.js`, registered as `sandbox`) runs endless
 single plays with test squads for tuning the feel; reachable via `?sandbox` URL param.

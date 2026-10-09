@@ -821,6 +821,46 @@ function arrowCanvas(color) {
 export const HIGHLIGHT_COLORS = { user: '#ffcc33', target: '#ffffff' };
 
 /**
+ * Pixel ellipse ring centred on (sx, sy) (e.g. a pulsing "tap me" marker under a player).
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} sx
+ * @param {number} sy
+ * @param {number} w ring width in px (height ~ 0.42 w)
+ * @param {string} color
+ * @param {number} [alpha=1]
+ */
+export function drawRing(ctx, sx, sy, w, color, alpha = 1) {
+  const ring = ringCanvas(color, Math.max(6, Math.round(w)));
+  const a = ctx.globalAlpha;
+  if (alpha !== 1) ctx.globalAlpha = a * alpha;
+  ctx.drawImage(ring, Math.round(sx) - Math.floor(ring.width / 2), Math.round(sy) - Math.floor(ring.height / 2));
+  ctx.globalAlpha = a;
+}
+
+// Hot-path sprite lookup: per team-look object, an integer-keyed map (no string building per
+// draw). Falls back to getPlayerSprite() on a miss. Invalidated if the look's colours change.
+const ANIM_INDEX = Object.fromEntries(Object.keys(ANIMS).map((k, i) => [k, i]));
+const FACING_INDEX = { right: 0, left: 1, up: 2, down: 3 };
+let fastCache = new WeakMap();
+
+function fastSprite(look, facing, anim, frame, skin) {
+  let e = fastCache.get(look);
+  if (!e || e.p !== look.primary || e.s !== look.secondary || e.h !== look.helmet) {
+    e = { p: look.primary, s: look.secondary, h: look.helmet, map: new Map() };
+    fastCache.set(look, e);
+  }
+  const fi = FACING_INDEX[facing] ?? 3;
+  const sk = ((skin | 0) % SKIN_TONES.length + SKIN_TONES.length) % SKIN_TONES.length;
+  const key = ((sk * 4 + fi) * 16 + ANIM_INDEX[anim]) * 8 + frame;
+  let spr = e.map.get(key);
+  if (!spr) {
+    spr = getPlayerSprite(look, { facing, anim, frame, skin: sk });
+    e.map.set(key, spr);
+  }
+  return spr;
+}
+
+/**
  * Draw a player with ground shadow and optional highlight marker.
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} sx screen x of the feet
@@ -833,8 +873,9 @@ export const HIGHLIGHT_COLORS = { user: '#ffcc33', target: '#ffffff' };
  */
 export function drawPlayer(ctx, sx, sy, look, opts = {}) {
   const anim = ANIMS[opts.anim] ? opts.anim : 'idle';
-  const frame = opts.frame != null ? opts.frame : frameAt(anim, opts.t || 0);
-  const spr = getPlayerSprite(look, { facing: opts.facing, anim, frame, skin: opts.skin });
+  const frame = Math.max(0, Math.min(ANIMS[anim].frames - 1, (opts.frame != null ? opts.frame : frameAt(anim, opts.t || 0)) | 0));
+  const facing = FACINGS.includes(opts.facing) ? opts.facing : 'down';
+  const spr = look && typeof look === 'object' ? fastSprite(look, facing, anim, frame, opts.skin) : getPlayerSprite(look, { facing, anim, frame, skin: opts.skin });
   const x = Math.round(sx);
   const y = Math.round(sy);
   const prevAlpha = ctx.globalAlpha;
@@ -962,6 +1003,7 @@ export function drawBall(ctx, sx, sy, z = 0, opts = {}) {
 
 /** Drop every cached sprite canvas (e.g. after team colours change or a context loss). */
 export function clearSpriteCache() {
+  fastCache = new WeakMap();
   canvasCache.clear();
   paletteCache.clear();
   shadowCache.clear();

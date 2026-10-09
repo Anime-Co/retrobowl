@@ -5,7 +5,8 @@ import { registerScreens } from './ui/screens/index.js';
 function boot() {
   const app = new App();
   registerScreens(app);
-  app.start('title');
+  const sandbox = new URLSearchParams(location.search).has('sandbox');
+  app.start(sandbox ? 'sandbox' : 'title');
 }
 
 window.addEventListener('error', (e) => console.error('[uncaught]', e.message, e.filename, e.lineno));

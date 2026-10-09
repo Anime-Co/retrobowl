@@ -152,8 +152,11 @@ export class Fx {
    */
   render(ctx, camera) {
     const prev = ctx.globalAlpha;
+    const s = this._s || (this._s = { x: 0, y: 0 });
+    const tt = this._t || (this._t = { x: 0, y: 0 });
+    const proj = (x, y, z, out) => (camera.project ? camera.project(x, y, z, out) : Object.assign(out, camera.toScreen(x, y, z)));
     for (const p of this.parts) {
-      const s = camera.toScreen(p.x, p.y, p.z);
+      proj(p.x, p.y, p.z, s);
       const x = Math.round(s.x);
       const y = Math.round(s.y);
       if (x < -4 || y < -4 || x > camera.viewW + 4 || y > camera.viewH + 4) continue;
@@ -169,8 +172,8 @@ export class Fx {
         ctx.fillRect(x, y, p.size, p.size);
         if (p.kind === 'hit' && f > 0.5) {
           // streak toward the motion direction
-          const t = camera.toScreen(p.x - p.vx * 0.03, p.y - p.vy * 0.03, p.z - p.vz * 0.03);
-          ctx.fillRect(Math.round(t.x), Math.round(t.y), 1, 1);
+          proj(p.x - p.vx * 0.03, p.y - p.vy * 0.03, p.z - p.vz * 0.03, tt);
+          ctx.fillRect(Math.round(tt.x), Math.round(tt.y), 1, 1);
         }
       } else {
         ctx.globalAlpha = prev * Math.min(1, f * 2.5);
@@ -182,7 +185,7 @@ export class Fx {
     for (const p of this.pops) {
       const k = p.t / p.dur;
       const rise = 1 - (1 - Math.min(1, k * 1.6)) ** 3; // ease-out
-      const s = camera.toScreen(p.x, p.y, p.z + rise * 1.6);
+      proj(p.x, p.y, p.z + rise * 1.6, s);
       // blink out during the last 25%
       if (k > 0.75 && Math.floor(p.t * 16) % 2) continue;
       drawText(ctx, p.text, Math.round(s.x), Math.round(s.y), {

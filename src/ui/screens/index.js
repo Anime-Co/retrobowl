@@ -8,6 +8,7 @@ import { FiredScreen } from './fired.js';
 import { SettingsScreen } from './settings.js';
 import { HelpScreen } from './help.js';
 import { MatchScreen } from '../../match/MatchScreen.js';
+import { SandboxScreen } from '../../play/view/SandboxScreen.js';
 
 export function registerScreens(app) {
   app.register('title', TitleScreen);
@@ -19,4 +20,5 @@ export function registerScreens(app) {
   app.register('settings', SettingsScreen);
   app.register('help', HelpScreen);
   app.register('match', MatchScreen);
+  app.register('sandbox', SandboxScreen); // dev: endless single plays (?sandbox)
 }

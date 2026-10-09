@@ -14,6 +14,12 @@
 //   {type:'swipe', x, y, dx, dy, dir, speed}  fast flick (also produces drag events before it)
 //   {type:'key', code, down:boolean, repeat:boolean}   keyboard / mapped gamepad buttons
 //   {type:'cancel'}                           pointer cancelled (e.g. OS gesture)
+//   {type:'pointer2', x, y, button}           a SECOND touch landed while the primary is held, or the
+//                                             right mouse button was pressed (alone or chorded with a
+//                                             held left button). Used for the bullet-pass toggle.
+// Presses that start on HUD controls (button, a, input, select, label, .interactive) are ignored
+// so tapping a HUD button never doubles as an on-field tap. `down` events also carry
+// `pointerType` ('touch'|'mouse'|'pen'), and `pointer.type` / `lastPointerType` keep the latest.
 
 export const TAP_MAX_MS = 260;
 export const TAP_MAX_MOVE = 12;
@@ -38,7 +44,9 @@ export class Input {
     this.keys = new Set();
     this.enabled = true;
     this.captureKeys = false; // when true, arrow/space keys don't scroll the page
+    this.lastPointerType = '';
     this._pad = {};
+    this._extra = new Set(); // ids of secondary pointers currently down
 
     el.addEventListener('pointerdown', (e) => this._down(e));
     el.addEventListener('pointermove', (e) => this._move(e));
@@ -65,15 +73,39 @@ export class Input {
     if (this.queue.length > 256) this.queue.shift();
   }
 
+  /** True when the press started on a HUD control (those handle their own clicks). */
+  _onControl(e) {
+    const t = e.target;
+    return !!(t && t !== this.el && typeof t.closest === 'function' && t.closest('button, a, input, select, textarea, label, .interactive'));
+  }
+
   _down(e) {
-    if (this.pointer.down) return; // primary pointer only
+    if (this._onControl(e)) return;
+    if (e.pointerType) this.lastPointerType = e.pointerType;
+    if (e.button === 2) {
+      // right mouse button: bullet toggle (a right press while the left is held arrives as a
+      // chorded pointermove instead, see _move)
+      const { x, y } = this._pos(e);
+      this._push({ type: 'pointer2', x, y, button: 2 });
+      e.preventDefault?.();
+      return;
+    }
+    if (this.pointer.down) {
+      // a second finger while the primary is held
+      if (e.pointerId !== this.pointer.id && !this._extra.has(e.pointerId)) {
+        this._extra.add(e.pointerId);
+        const { x, y } = this._pos(e);
+        this._push({ type: 'pointer2', x, y, button: 0 });
+      }
+      return; // primary pointer only
+    }
     if (e.button !== undefined && e.button > 0) return;
     const { x, y } = this._pos(e);
     try { this.el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const p = this.pointer;
-    Object.assign(p, { down: true, id: e.pointerId, x, y, startX: x, startY: y, startT: performance.now(), dragging: false });
+    Object.assign(p, { down: true, id: e.pointerId, x, y, startX: x, startY: y, startT: performance.now(), dragging: false, type: e.pointerType || '' });
     p.history = [{ x, y, t: p.startT }];
-    this._push({ type: 'down', x, y });
+    this._push({ type: 'down', x, y, pointerType: e.pointerType || '' });
     e.preventDefault?.();
   }
 
@@ -84,6 +116,7 @@ export class Input {
       p.x = x; p.y = y; // hover position for mouse aiming
       return;
     }
+    if (e.button === 2 && (e.buttons & 2)) this._push({ type: 'pointer2', x, y, button: 2 }); // chorded right press
     p.x = x; p.y = y;
     const now = performance.now();
     p.history.push({ x, y, t: now });
@@ -100,6 +133,7 @@ export class Input {
 
   _up(e) {
     const p = this.pointer;
+    this._extra.delete(e.pointerId);
     if (!p.down || e.pointerId !== p.id) return;
     const { x, y } = this._pos(e);
     const now = performance.now();
@@ -131,6 +165,7 @@ export class Input {
 
   _cancel(e) {
     const p = this.pointer;
+    if (e.pointerId !== undefined) this._extra.delete(e.pointerId);
     if (!p.down || (e.pointerId !== undefined && e.pointerId !== p.id)) return;
     p.down = false;
     p.dragging = false;
@@ -186,6 +221,7 @@ export class Input {
     this.queue = [];
     this.pointer.down = false;
     this.pointer.dragging = false;
+    this._extra.clear();
   }
 
   isDown(code) {
