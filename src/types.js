@@ -126,7 +126,8 @@
 /**
  * Input to the on-field engine for one play.
  * @typedef {Object} PlaySetup
- * @property {'scrimmage'|'fg'|'pat'|'two_point'} kind
+ * @property {'scrimmage'|'fg'|'pat'|'kick_return'} kind   (2-pt try = 'scrimmage' from the 2 with twoPoint:true)
+ * @property {boolean} [twoPoint]
  * @property {number} losX            world x of line of scrimmage (10 = own goal line, 110 = opp goal)
  * @property {number} firstDownX      world x of line to gain (>=110 means goal to go)
  * @property {number} hashY           world y where the ball is spotted
@@ -137,12 +138,16 @@
  * @property {{x:number, y:number}} wind   mph components (+x = toward opponent goal)
  * @property {number} seed            rng seed for this play
  * @property {number} [clockLeft]     seconds left in the quarter (for UI only)
+ * @property {'clear'|'rain'|'snow'} weather
+ * @property {number} difficultyStep  1..16 internal difficulty (MECHANICS 5.5)
+ * @property {number} quarter         1..4 (5 = OT); kicker/QB fatigue scales with game progress
+ * @property {number} gameProgress    0..1 fraction of the game elapsed (stamina fade)
  */
 
 /**
  * Engine output when a play ends.
  * @typedef {Object} PlayResult
- * @property {'tackle'|'oob'|'incomplete'|'td'|'interception'|'sack'|'safety'|'fumble'|'fg_good'|'fg_miss'|'pat_good'|'pat_miss'|'two_good'|'two_fail'} outcome
+ * @property {'tackle'|'oob'|'incomplete'|'td'|'interception'|'sack'|'safety'|'fumble'|'fg_good'|'fg_miss'|'pat_good'|'pat_miss'|'kick_blocked'|'touchback'|'return_td'} outcome
  * @property {number} endX            world x where the next play is spotted (offense perspective)
  * @property {number} endY            world y of the dead ball (for hash selection)
  * @property {number} yards           net yards relative to the line of scrimmage
@@ -150,7 +155,7 @@
  * @property {boolean} clockStops     incomplete / out of bounds / score / turnover
  * @property {boolean} turnover
  * @property {number} [turnoverX]     for interceptions: world x where the defense takes over (offense frame)
- * @property {'pass'|'run'|'kick'} type
+ * @property {'pass'|'run'|'kick'|'return'} type
  * @property {string|null} passer     franchise ids (null for fillers)
  * @property {string|null} receiver
  * @property {string|null} rusher

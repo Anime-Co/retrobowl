@@ -67,41 +67,53 @@ Registered in `src/ui/screens/index.js`. Stable names:
 
 ## PLAY-SIM contract (`src/play/sim/`)
 
+Implements MECHANICS.md §2–§4 for ONE play. Deterministic for a given `setup.seed` + command stream.
+
 ```js
 import { PlaySim } from './src/play/sim/PlaySim.js';
 const sim = new PlaySim(setup /* PlaySetup, see types.js */);
-sim.update(dt);              // fixed 1/60 s; deterministic for a given setup.seed + command stream
-// commands (called by the controller, any time; ignored when not applicable)
-sim.snap();                  // presnap -> live (no-op otherwise)
-sim.aimStart();              // begin aiming a pass (QB has ball, behind LOS)
-sim.aimAt(x, y);             // world landing target for the pass; engine clamps by arm strength
-sim.aimRelease();            // throw at current target
+sim.update(dt);              // fixed 1/60 s
+// ---- commands (called by the controller; ignored when not applicable) ----
+// pre-snap
+sim.changePlay();            // audible: re-roll the assigned play (match layer enforces the count)
+sim.handoff();               // snap + hand off to RB (tap on RB). Run play.
+sim.dropBack();              // snap + QB drops back (first backward drag / Space). Pass play.
+// passing (QB has ball, before tuck / before crossing LOS)
+sim.aimAt(x, y);             // world landing target (controller maps slingshot drag -> target);
+                             // engine clamps to arm range; sets sim.aim
+sim.aimRunMode(on);          // drag collapsed past the QB -> "run" icon; release will tuck & run
+sim.toggleBullet();          // lob <-> bullet while aiming
+sim.release();               // throw at current aim (or tuck & run if aim run mode)
 sim.aimCancel();
-sim.move(dx, dy);            // desired movement direction for the user-controlled player (QB scramble /
-                             // ball carrier), components -1..1 in WORLD axes; (0,0) = default behaviour
-sim.juke(dir);               // dir -1 (toward y-) | +1 (toward y+)
+sim.tuck();                  // QB tucks and becomes the ball carrier (keyboard R)
+// ball carrier (also kick returner)
+sim.sideStep(dir);           // dir -1 = toward y-, +1 = toward y+ (WORLD axes)
+sim.drift(dir);              // continuous lateral drift while key held (-1|0|1)
 sim.dive();
-sim.kickAim(aim, power);     // kicks: aim -1..1 lateral, power 0..1 (live preview)
-sim.kick();                  // execute kick with current kickAim
-// read-only state (renderer/controller)
-sim.phase   // 'presnap'|'live'|'air'|'carry'|'kick'|'dead'
-sim.t       // seconds since snap
-sim.players // Entity[]: {id, side:'off'|'def', pos, slot, x, y, vx, vy, dir:{x,y}, anim, animT,
-            //            number, squad: SquadPlayer, hasBall, controlled, down:boolean, route?}
-sim.ball    // {x, y, z, vx, vy, vz, state:'held'|'air'|'loose'|'kicked'|'dead', holder:id|null, target?:{x,y}}
-sim.aim     // null | {x, y, maxDist, path:[{x,y,z}], valid}
-sim.kickState // null | {aim, power, wind, preview path}
-sim.losX, sim.firstDownX, sim.setup
-sim.events  // SimEvent[] appended during update; consumer drains with sim.drainEvents()
-            // {type:'snap'|'throw'|'catch'|'drop'|'deflect'|'int'|'tackle'|'broken_tackle'|'juke'|
-            //   'dive'|'sack'|'td'|'oob'|'safety'|'kick'|'kick_good'|'kick_miss'|'first_down_line'|
-            //   'whistle', x, y, ...}
-sim.result  // PlayResult | null (set once phase === 'dead')
+sim.stutter();               // also: in own end zone on a kick return -> touchback
+sim.truck(on);               // hold to truck
+// FG / PAT
+sim.kickTap();               // 1st tap locks power, 2nd tap locks aim and kicks
+// ---- read-only state for the view ----
+sim.phase      // 'presnap'|'dropback'|'air'|'carry'|'kick'|'return'|'dead'
+sim.t          // seconds since snap (0 in presnap)
+sim.play       // assigned play: {name, qbDepth, routes:[{playerId, points:[{x,y}], type}], runLane, teBlocks}
+sim.players    // Entity[]: {id, side:'off'|'def', pos, slot, x, y, vx, vy, face:{x,y}, anim, animT,
+               //            number, squad: SquadPlayer, hasBall, controlled, down, lunging, blocking}
+sim.ball       // {x, y, z, vx, vy, vz, state:'held'|'air'|'loose'|'kicked'|'dead', holder:id|null, bullet}
+sim.aim        // null | {tx, ty, valid, runMode, bullet, path:[{x,y,z}], visibleFrac, maxDist}
+sim.kick       // null | {stage:'power'|'aim'|'flight'|'done', power, aim, wind:{x,y}, pressure, path}
+sim.losX, sim.firstDownX, sim.setup, sim.weather
+sim.drainEvents() // SimEvent[] since last drain:
+               // {type:'snap'|'handoff'|'throw'|'catch'|'drop'|'deflect'|'int'|'tackle'|'burn'|
+               //   'stiffarm'|'hurdle'|'juke'|'dive'|'stutter'|'truck_hit'|'sack'|'fumble'|'td'|'oob'|
+               //   'safety'|'kick'|'doink'|'kick_good'|'kick_miss'|'touchback'|'whistle', x, y, ...}
+sim.result     // PlayResult | null (set once phase === 'dead')
 ```
 
-The sim owns all rules of a single play: formations, routes (randomised per play per MECHANICS),
-blocking, pass rush, coverage, pursuit, catching/interceptions, tackling, juke/dive, out of bounds,
-touchdown/safety detection, FG/PAT physics with wind, and stat attribution.
+Kinds (`setup.kind`): `'scrimmage'` (normal down; also used for the 2-pt try from the 2),
+`'fg'`, `'pat'`, `'kick_return'` (opponent kicks off; the user controls the returner; the result's
+`endX` is the new line of scrimmage in the user's offense frame, or a touchback at the 25).
 
 ## PLAY-VIEW contract (`src/play/view/`, `src/render/sprites.js|field.js|fx.js`)
 
