@@ -54,12 +54,12 @@ export function deleteSave(slot = 0) {
 
 export const DEFAULT_SETTINGS = {
   sound: true,
-  music: true,
   vibration: true,
-  quarterMinutes: 2, // simulated game-clock minutes per quarter (see docs/MECHANICS.md)
-  difficulty: 1, // 0 easy, 1 normal, 2 hard
-  showRoutes: true,
-  leftHanded: false,
+  quarterMinutes: 2, // 1 | 2 | 3 (MECHANICS 5.1)
+  driveDirection: 'right', // 'right' | 'left' | 'alternate' (landscape only; portrait always drives up)
+  cameraZoom: 'near', // 'near' | 'far'
+  wind: 'normal', // 'off' | 'low' | 'normal' | 'high'
+  showTips: true, // first-play control hints
 };
 
 export function loadSettings() {
