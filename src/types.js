@@ -117,7 +117,7 @@
 /**
  * @typedef {Object} Squad
  * @property {TeamLook} look
- * @property {{QB:SquadPlayer, RB:SquadPlayer, WR:SquadPlayer[], TE:SquadPlayer, OL:SquadPlayer[], K:SquadPlayer}} offense
+ * @property {{QB:SquadPlayer, RB:SquadPlayer, WR:SquadPlayer[], TE:SquadPlayer[], OL:SquadPlayer[], K:SquadPlayer}} offense   TE = [TE1, TE2]
  * @property {{DL:SquadPlayer[], LB:SquadPlayer[], DB:SquadPlayer[]}} defense
  * @property {number} offRating        0..1 overall (for sims)
  * @property {number} defRating        0..1 overall

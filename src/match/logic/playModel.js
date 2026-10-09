@@ -32,7 +32,7 @@ export function playModel(setup, opts = {}) {
 function roster(setup) {
   const o = setup.offense?.offense || {};
   const wr = Array.isArray(o.WR) ? o.WR : [];
-  return { qb: o.QB?.id ?? null, rb: o.RB?.id ?? null, wr1: wr[0]?.id ?? null, wr2: wr[1]?.id ?? null, te: o.TE?.id ?? null, k: o.K?.id ?? null };
+  return { qb: o.QB?.id ?? null, rb: o.RB?.id ?? null, wr1: wr[0]?.id ?? null, wr2: wr[1]?.id ?? null, te: (Array.isArray(o.TE) ? o.TE[0]?.id : o.TE?.id) ?? null, k: o.K?.id ?? null };
 }
 
 function base(setup, fields) {
