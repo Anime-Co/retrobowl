@@ -701,5 +701,8 @@ test('release cost preview and rush-treatment checks match the actions', () => {
   assert.equal(F.canRushTreatment(save, q.id).ok, true);
   assert.equal(F.rushTreatment(save, q.id).ok, true);
   assert.equal(F.canRushTreatment(save, q.id).reason, 'used');
-  assert.deepEqual(F.previewLeague(77).map((t) => [t.id, t.off, t.def]), F.newFranchise({ teamId: 'BOS', seed: 77 }).teams.map((t) => [t.id, t.off, t.def]));
+  // The picker preview matches every AI team; the chosen team's ratings are then recomputed
+  // from its generated starting roster.
+  const ai = (teams) => teams.filter((t) => t.id !== 'BOS').map((t) => [t.id, t.off, t.def]);
+  assert.deepEqual(ai(F.previewLeague(77)), ai(F.newFranchise({ teamId: 'BOS', seed: 77 }).teams));
 });
