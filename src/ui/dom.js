@@ -72,7 +72,10 @@ export function modal(root, { title, body, actions, dismissable = false }) {
       h('div.btn-col', actions.map((a) => h(`button.btn.block${a.kind ? `.${a.kind}` : ''}`, { onclick: () => close(a.value), disabled: a.disabled }, a.label))),
     );
     overlay.appendChild(box);
-    if (dismissable) overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(null); });
+    if (dismissable) {
+      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(null); });
+      overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } });
+    }
     root.appendChild(overlay);
     const first = box.querySelector('button:not([disabled])');
     if (first) setTimeout(() => first.focus({ preventScroll: true }), 30);

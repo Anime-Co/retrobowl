@@ -7,7 +7,8 @@
   "scripts": {
     "start": "npx --yes http-server . -p 8080 -c-1",
     "test": "node --test tests/unit/*.test.js",
-    "e2e": "node tests/e2e/run.mjs"
+    "e2e": "node tests/e2e/run.mjs",
+    "e2e:ui": "node tests/e2e/ui-flow.mjs --all"
   },
   "license": "MIT"
 }
