@@ -105,28 +105,29 @@ export const CFG = {
   /** Simulated opponent possessions (§5.3). Logistic model on ratings + field + difficulty. */
   sim: {
     /** Logit of p(score) at equal ratings, start at own 25, difficulty step 6. */
-    scoreBase: 1.3,
+    scoreBase: -0.15,
     /** Logit per star of (OFF − DEF). */
     scoreRatingK: 0.55,
     /** Logit per 10 yards of start position past the 25. */
     scoreFieldK: 0.3,
     /** Per-drive logit noise (high variance). */
     noiseSd: 0.45,
-    /** Logit per difficulty step relative to step 6 (Medium). */
-    diffPerStep: 0.065,
+    /** Logit per difficulty step relative to step 6 (Medium): above / below the pivot. */
+    diffPerStep: 0.04,
+    diffPerStepBelow: 0,
     /** Share of scoring drives that are TDs (logit): base + ratingK × d + fieldK × field. */
-    tdBase: 1.2,
+    tdBase: 1.0,
     tdRatingK: 0.3,
     tdFieldK: 0.12,
     /** Of non-scoring drives: turnover share (logit) and INT vs fumble split. */
-    turnoverBase: -1.0,
+    turnoverBase: -1.2,
     turnoverRatingK: 0.3,
     intShare: 0.62,
     /** Of non-scoring, non-turnover drives: turnover-on-downs share. */
     downsShare: 0.1,
     /** Runoff in seconds at the 2-min baseline: base + perYard × yards gained, ×0.8..1.2. */
-    runoffBase: 6,
-    runoffPerYard: 0.55,
+    runoffBase: 9,
+    runoffPerYard: 0.5,
     runoffJitter: 0.2,
     /** Runoff multiplier when trailing late (hurry-up) and leading late (milking). */
     hurryFactor: 0.6,
@@ -219,7 +220,8 @@ export function stepToDifficulty(step) {
 
 /** Sim-drive logit bias for a difficulty step (0 at Medium = step 6). */
 export function simDifficultyBias(step) {
-  return CFG.sim.diffPerStep * ((step ?? 6) - 6);
+  const d = (step ?? 6) - 6;
+  return (d >= 0 ? CFG.sim.diffPerStep : CFG.sim.diffPerStepBelow) * d;
 }
 
 /** Squad rating 0..1 → stars 0.5..5. */

@@ -48,7 +48,8 @@ export const TUNING = {
 
   // ---------------------------------------------------------------- difficulty (step 1..16)
   // Values are anchored at step 6 (Medium) and move per step. The franchise layer ALSO shifts the
-  // opponent's ratings by step (0.2 stars/step), so the AI scaling here is deliberately mild.
+  // opponent's ratings by step (DIFFICULTY.offsetPerStep: 0.2 stars/step below Medium, 0.05 above),
+  // so the AI scaling here is deliberately mild, and milder still above Medium (slopeScale).
   difficulty: {
     // 'difficulty' (0 easy,1 normal,2 hard) -> step when difficultyStep is missing
     legacyStep: [2, 6, 10],
@@ -62,6 +63,9 @@ export const TUNING = {
     catch: [0, -0.003], // offensive catch chance bonus
     // visible-arc trim: 0 up to step 6, -0.1 at step 10 (Hard), -0.2 at step 16 (Extreme) [D]
     arcTrim: [[6, 0], [10, 0.1], [16, 0.2]],
+    // every per-step slope above is scaled by `above` for steps over the pivot and by `below`
+    // under it (balance lever: how much each difficulty step changes the defenders)
+    slopeScale: { below: 1.25, above: 0.2 },
   },
 
   // ---------------------------------------------------------------- formations
@@ -339,7 +343,7 @@ export const TUNING = {
     lowPowerFloor: 0.45, // power factor = floor + (1-floor) * (p/band)^powerExp below the band
     powerExp: 1.2,
     sweepDeg: 22, // [D] arrow sweep +-22 degrees
-    sweepPeriodMin: 0.95, // accuracy 0 (fast arrow)
+    sweepPeriodMin: 1.15, // accuracy 0 (fast arrow): ~100 ms good window at 44 yd, PAT ~80% for a filler K
     sweepPeriodMax: 2.15, // accuracy 1 (slow arrow)
     // [D] max distance = 38 + 2.8 * range(1..10) = 40.8 + 25.2 * kickPower
     rangeBase: 40.8,
@@ -394,7 +398,8 @@ export const TUNING = {
 export function diffParams(step) {
   const D = TUNING.difficulty;
   const s = Math.max(1, Math.min(16, Number.isFinite(step) ? step : D.pivot));
-  const v = ([mid, per]) => mid + per * (s - D.pivot);
+  const k = s >= D.pivot ? D.slopeScale.above : D.slopeScale.below;
+  const v = ([mid, per]) => mid + per * k * (s - D.pivot);
   let trim = 0;
   const pts = D.arcTrim;
   for (let i = 1; i < pts.length; i++) {

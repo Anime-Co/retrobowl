@@ -13,7 +13,8 @@ import { clamp } from '../core/util.js';
  */
 export function difficultyRating(starsValue, step) {
   if (step >= DIFFICULTY.fiveStarStep) return 5;
-  return clamp(starsValue + (step - DIFFICULTY.pivot) * DIFFICULTY.offsetPerStep, 0.5, 5);
+  const d = step - DIFFICULTY.pivot;
+  return clamp(starsValue + d * (d >= 0 ? DIFFICULTY.offsetPerStep : DIFFICULTY.offsetPerStepBelow), 0.5, 5);
 }
 
 function newTally() {

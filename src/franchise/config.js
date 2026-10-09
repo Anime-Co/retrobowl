@@ -61,10 +61,10 @@ export const TRAIT_EFFECTS = {
 };
 
 /** Salary cap and asking salary (MECHANICS §6.6). $K. */
-export const CAP = { base: 60000, perSeason: 1000 };
+export const CAP = { base: 60000, perSeason: 500 };
 export const SALARY = {
   base: 300,              // 0.3 $M
-  mult: 900,              // 0.9 $M x stars^exp
+  mult: 1000,             // 1.0 $M x stars^exp
   exp: 1.6,
   roundTo: 100,           // one decimal $M
   min: 500,
@@ -88,7 +88,7 @@ export const ROOKIE_CONTRACT = { years: 3, min: 500, max: 1500 };
 export const CC = {
   start: 6,
   perGame: 1,
-  win: 2,
+  win: 1,
   bigWinMargin: 21,
   bigWin: 1,
   playoffWin: 3,
@@ -107,7 +107,7 @@ export const FACILITIES = {
     rehab: 'Shorter injuries, faster recovery between games.',
   },
   maxLevel: 5,
-  upgradeCost: { 2: 4, 3: 8, 4: 12, 5: 18 },  // CC to reach level
+  upgradeCost: { 2: 5, 3: 9, 4: 14, 5: 20 },  // CC to reach level
   decayChance: 0.35,
   maintainCost: 2,
   trainingXpPerLevel: 0.15,
@@ -277,7 +277,8 @@ export const DIFFICULTY = {
   max: 16,
   capBeforeTitle: 9,
   pivot: 6,               // step with no rating offset
-  offsetPerStep: 0.2,     // opponent stars per step above pivot (step 1: -1.0, step 15: +1.8)
+  offsetPerStep: 0.05,    // opponent stars per step above pivot (Hard/step 10: +0.2, step 15: +0.45)
+  offsetPerStepBelow: 0.2, // ... per step below pivot (step 1: -1.0)
   fiveStarStep: 16,       // at this step every opponent is a 5-star team
 };
 
@@ -342,13 +343,27 @@ export const WEATHER = {
 /** Generic fillers (MECHANICS §6.1). */
 // Replacement-level players in empty slots. Must stay clearly below any star (a 1.5★ star's key
 // attributes start at 3 → skill ≈ 0.22), so signing a star always upgrades the position.
-export const FILLER = { skillMin: 0.08, skillMax: 0.14, stars: 0.75, level: 1 };
+// AI teams are abstract star ratings; their on-field players are synthesized from them. Cap the
+// synthesized attribute mean so a 5★ (or Extreme) opponent is elite but not flawless: uncapped,
+// every attribute sat at 10 and equal-rated user teams could not move the ball at all.
+export const VIRTUAL = { attrCap: 8.8 };
+
+export const FILLER = { skillMin: 0.08, skillMax: 0.14, stars: 1.25, level: 1 };
 
 /** Team OFF/DEF from starters (MECHANICS §6.2). Weights per slot (sum 1 per side). */
 export const TEAM_WEIGHTS = {
   off: { QB: [0.28], RB: [0.12], WR: [0.12, 0.10], TE: [0.06, 0.04], OL: [0.04, 0.04, 0.04, 0.04, 0.04], K: [0.08] },
-  def: { DL: [0.07, 0.07, 0.07, 0.07], LB: [0.09, 0.09, 0.09], DB: [0.1125, 0.1125, 0.1125, 0.1125] },
+  def: { DL: [0.08, 0.08, 0.08, 0.08], LB: [0.09, 0.09, 0.09], DB: [0.1025, 0.1025, 0.1025, 0.1025] },
 };
+
+/**
+ * Team rating formula (squad.js sideRating): starters ranked best first, the slot at cumulative
+ * weight x counts with the slope of Q(x) = 1 - (1 - x)^topHeavy (1 = plain weighted mean). The
+ * user can carry 12 stars for 23 slots, so fillers always fill half the lineup; with a plain mean
+ * a roster of elite stars could never rate like a top AI team and one new star would barely move
+ * the needle. Monotonic: a better player never lowers the rating.
+ */
+export const TEAM_RATING = { topHeavy: 2.2 };
 
 /** Draft (MECHANICS §7.7). */
 export const DRAFT = {
@@ -368,6 +383,7 @@ export const DRAFT = {
 
 /** Free agency (MECHANICS §7.7). */
 export const FREE_AGENCY = {
+  feePerStar: 1.5, // signing fee = ceil(feePerStar * stars) CC: a signing should be a real choice
   min: 10,
   max: 14,
   refreshWeeks: 4,

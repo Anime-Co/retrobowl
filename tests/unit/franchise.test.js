@@ -661,7 +661,7 @@ test('free agency: pool size, fee, cap/roster/CC checks', () => {
     assert.ok(save.freeAgents.length >= 10 && save.freeAgents.length <= 14);
   }
   const fa = F.freeAgents(save);
-  for (const f of fa) assert.equal(f.fee, Math.ceil(f.stars));
+  for (const f of fa) assert.equal(f.fee, Math.ceil(F.FREE_AGENCY.feePerStar * f.stars));
   save.cc = 0;
   assert.equal(F.signFreeAgent(save, fa[0].id).reason, 'cc');
   save.cc = 99;

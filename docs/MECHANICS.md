@@ -257,10 +257,14 @@ Matches are short: quarters of 1, 2 or 3 minutes of real game clock [C]. A whole
   fumble lost, turnover on downs, end of half [L]. Star defenders get credit by name for
   sacks/INTs and stats are tracked [L].
 - **Clock runoff** grows with distance [L]: about 15 s on a short field up to about 40–50 s on a
-  long TD drive at the 2-minute baseline. Scale with quarter length: 1 min ×0.5, 3 min ×1.5. If
+  long TD drive at the 2-minute baseline. [Tuned] 9 s + 0.5 s per yard covered: a 3-and-out still
+  costs real time, a long TD drive about 46 s, a short-field TD about 19 s. Scale with quarter length: 1 min ×0.5, 3 min ×1.5. If
   time runs out first, the drive ends with the half, with a small chance of a quick strike when
   the field is short [U→D].
-- **Easy** is tuned for about 80 combined points per game [C].
+- **Easy** is said to target about 80 combined points per game [C]. [Tuned, deliberate deviation]
+  We land at about 45–50. The clock caps possessions at about 8.5 per team at 2-minute quarters,
+  so 80 points would require opponents to score *more* on Easy, which defeats its purpose. Easy is
+  instead clearly easier: a casual player wins about 85% of evenly rated games.
 
 ### 5.4 Overtime and ties
 - [C, 2025 rules] Both teams get a possession in OT; after that it's sudden death. Easy always
@@ -274,6 +278,16 @@ Matches are short: quarters of 1, 2 or 3 minutes of real game clock [C]. A whole
   team.
 - [D] Mapping: Easy → step 2, Medium → 6, Hard → 10, Extreme → 16. The step drives the opponent
   rating offset, defender AI speed/reaction, visible arc trim, and the sim-drive bias.
+- [Tuned] Difficulty is **asymmetric** around Medium. Below it, each step lowers opponents by
+  0.2★ (so Dynamic can rescue a weak team). Above it, each step adds only 0.05★ and a small
+  sim-drive bias, because the symmetric slope made Hard unwinnable. Measured with the real engine
+  at equal 3★ ratings, an average player wins about 45% on Medium and 32% on Hard.
+- [Tuned] AI teams' on-field players are synthesized from their star ratings, with the attribute
+  mean capped at 8.8. A 5★ or Extreme opponent is elite, not flawless.
+- **Extreme** keeps the original's rule that every opponent plays as a 5★ team. It is meant for
+  elite rosters: an evenly matched 3★ team is shut out (0 wins in 100 measured games), and a good
+  player with a 4★ team wins about 10–15%. Dynamic (the default) is the mode for building up a
+  weak team.
 
 ### 5.6 Weather [C/L]
 - **Snow** slows players and raises fumbles. **Rain** raises fumbles and drops a little, and
@@ -316,12 +330,19 @@ Four attributes per player, **1–10 scale** [L], shown as 10-segment bars:
 | DL, LB, DB | Tackling, Strength, Speed, Stamina |
 | K | Range, Accuracy, Speed, Stamina |
 
+- **Generic fillers** play at replacement level on the field (skills about 0.08–0.14), but count as
+  1.25★ in team ratings, so ratings stay readable. Any star beats a filler at their key attributes.
 - **Overall stars**: 0.5–5.0 in half-star steps [C], from a position-weighted mean of the
   attributes [D]. Weights: QB Acc .35 Arm .35 Sta .2 Spd .1; skill players Spd .35 Cat .3 Str .2
   Sta .15; OL Blk .45 Str .35 Sta .1 Spd .1; defense Tck .35 Spd .3 Str .25 Sta .1; K Rng .45
   Acc .45 Spd .05 Sta .05.
 - **Team ratings** OFF and DEF are shown as stars, 0.5–5 [U→D]. They combine starters (stars or
   fillers) by position weight, plus a coordinator boost of +0.1 to +0.5 stars.
+  [Tuned] The formula is an *ordered* weighted mean that counts the best players in a unit most
+  (top-heavy factor 2.2). With 12 stars spread over 23 slots, a plain mean drowned every star in
+  fillers. The ordered form never drops when a better player joins, and a unit of equal players
+  rates exactly their stars. Signing a 3★ defender adds about +0.25★ DEF; a 4★ DB adds about
+  +0.5★.
 
 ### 6.3 XP and level-ups [U→D]
 - Players earn XP from production: yards, catches, TDs, completions, made kicks; for defenders,
@@ -350,8 +371,9 @@ Four attributes per player, **1–10 scale** [L], shown as 10-segment bars:
 ### 6.6 Contracts and cap [L/U→D]
 - Each star has a salary in $M (one decimal) and 1–5 years remaining [L]. A **salary cap** blocks
   signings over it [L]. Fillers are free.
-- [D] Cap $60.0M, rising $1.0M per season. Asking salary is about 0.3 + 0.9 × stars^1.6 $M
-  (0.8–12.5), × age and morale factors. Rookie deals: 3 years at 0.5–1.5M.
+- [D, tuned] Cap $60.0M, rising $0.5M per season. Asking salary is about 0.3 + 1.0 × stars^1.6 $M,
+  × age and morale factors. By season 3+ the cap usually blocks one re-sign or wanted free agent per
+  offseason. Rookie deals: 3 years at 0.5–1.5M.
 - Expiring contracts: the player asks for a salary and length. Accept, or let him go. If morale is
   under 25 he may refuse.
 - **Release** a player any time: frees the roster spot and 50% of the remaining salary this season
@@ -378,15 +400,16 @@ Four attributes per player, **1–10 scale** [L], shown as 10-segment bars:
 ### 7.2 Coaching credits (CC) [L/U→D]
 - CC is the single scarce meta currency, spent on facilities, coordinators, free-agent signing
   fees, morale boosts and rush treatment [L].
-- [D] Earning: +1 per game, +2 more for a win, +1 for a win by 21+, +3 per playoff win, +6 for
-  winning the Final. Press answers can give ±1. Start the career with 6 CC.
+- [D, tuned] Earning: +1 per game, +1 more for a win, +1 for a win by 21+, +3 per playoff win,
+  +6 for winning the Final. That works out to one meaningful purchase about every 3 games in season
+  1. Press answers can give ±1. Start the career with 6 CC.
 
 ### 7.3 Facilities [L/U→D]
 - **Stadium**, **Training**, **Rehab**, each at levels 1–5 [L].
   - Stadium: fan growth, home-field edge, CC bonus +1 per home win at level 4+.
   - Training: XP ×(1 + 0.15 × (lvl − 1)).
   - Rehab: injury duration ×(1 − 0.12 × (lvl − 1)), condition recovery up.
-- Upgrade cost [D]: 4 / 8 / 12 / 18 CC to reach levels 2–5. Each offseason, every facility above
+- Upgrade cost [D, tuned]: 5 / 9 / 14 / 20 CC to reach levels 2–5. Each offseason, every facility above
   level 1 has a 35% chance to drop one level unless "maintained" (pay 2 CC per facility) [U→D].
 
 ### 7.4 Coordinators [L/U→D]
@@ -412,7 +435,8 @@ Four attributes per player, **1–10 scale** [L], shown as 10-segment bars:
   "Scout" (1 CC) reveals exact stars and potential. A pick needs a free roster spot (you can
   release or pass).
 - **Free agency**: a pool of 10–14 stars during the season, refreshed every 4 weeks and in the
-  offseason. Signing needs cap room, a roster spot and a CC fee (= stars rounded up).
+  offseason. Signing needs cap room, a roster spot and a CC fee of ceil(1.5 × stars), so a signing competes
+  with facilities and coordinators.
 - There are **no trades** [U].
 
 ### 7.8 Offseason order [U→D]

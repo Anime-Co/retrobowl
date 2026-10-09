@@ -1,5 +1,5 @@
 // Free agency (MECHANICS §7.7): a pool of 10-14 stars, refreshed every 4 weeks in season and in
-// the offseason. Signing needs cap room, a roster spot and a CC fee (= stars rounded up).
+// the offseason. Signing needs cap room, a roster spot and a CC fee (ceil(1.5 x stars)).
 
 import { FREE_AGENCY, ROSTER } from './config.js';
 import { createPlayer, stars, askingSalary, demandYears, maxContractYears, fullName, shortName, potentialLabel, emptyStats, assignFreeNumber } from './players.js';
@@ -9,8 +9,8 @@ import { capRoom, spendCc } from './economy.js';
 import { refreshUserRatings } from './squad.js';
 import { addHeadline } from './feed.js';
 
-/** CC fee to sign: stars rounded up. */
-export const signingFee = (p) => Math.ceil(stars(p));
+/** CC fee to sign: ceil(feePerStar x stars). */
+export const signingFee = (p) => Math.ceil(FREE_AGENCY.feePerStar * stars(p));
 
 /** Set the player's asking contract (`ask`) from his current stars/age/morale. */
 export function setAsk(p) {

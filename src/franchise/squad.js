@@ -1,7 +1,7 @@
 // Squad builder: turns the franchise roster (user) or abstract ratings (AI) into the normalized
 // Squad the play engine consumes (types.js). Skills are 0..1 with 0.5 = attribute 5.5.
 
-import { TEAM_WEIGHTS, FILLER, COORDINATORS, MORALE, CONDITION } from './config.js';
+import { TEAM_WEIGHTS, TEAM_RATING, FILLER, VIRTUAL, COORDINATORS, MORALE, CONDITION } from './config.js';
 import { ATTRS, starsExact, attrToSkill, shortName } from './players.js';
 import { pickName, pickJersey } from '../data/names.js';
 import { clamp } from '../core/util.js';
@@ -44,6 +44,40 @@ export function depthChart(rosterArr) {
 export const starsToUnit = (s) => clamp((2 * s - 1) / 9, 0, 1);
 
 /**
+ * One side's rating (stars) from its starters (MECHANICS §6.2: "a star in a position makes that
+ * slot noticeably better, both on the field and in the team rating"). Empty slots are generic
+ * fillers worth FILLER.stars. The starters are ranked best first and the best players carry the
+ * unit: the slot at cumulative weight x counts with Q'(x), Q(x) = 1 - (1 - x)^topHeavy (an
+ * ordered weighted mean). A side of equal players rates exactly their stars, a few stars among
+ * fillers count much more than their slot weight, and replacing any player with a better one
+ * never lowers the rating.
+ * @param {Object<string, number[]>} weights  slot weights by position
+ * @param {Object<string, (Object|null)[]>} slots  depth-chart slots (null = filler)
+ */
+export function sideRating(weights, slots) {
+  const items = [];
+  let total = 0;
+  for (const pos of Object.keys(weights)) {
+    weights[pos].forEach((w, i) => {
+      const p = slots[pos] && slots[pos][i];
+      items.push({ w, v: p ? starsExact(p) : FILLER.stars });
+      total += w;
+    });
+  }
+  if (!(total > 0)) return FILLER.stars;
+  items.sort((a, b) => b.v - a.v);
+  const Q = (x) => 1 - Math.pow(Math.max(0, 1 - x / total), TEAM_RATING.topHeavy);
+  let cum = 0;
+  let r = 0;
+  for (const it of items) {
+    const q0 = Q(cum);
+    cum += it.w;
+    r += (Q(cum) - q0) * it.v;
+  }
+  return r;
+}
+
+/**
  * Team OFF/DEF in stars (0.5..5, one decimal) incl. coordinator boost (MECHANICS §6.2).
  * AI teams return their stored ratings.
  * @returns {{off:number, def:number, offBase:number, defBase:number, ocBoost:number, dcBoost:number}}
@@ -55,15 +89,8 @@ export function teamRatings(save, teamId = save.userTeamId) {
     return { off: team.off, def: team.def, offBase: team.off, defBase: team.def, ocBoost: 0, dcBoost: 0 };
   }
   const { slots } = depthChart(team.roster);
-  const side = (weights) => {
-    let v = 0;
-    for (const pos of Object.keys(weights)) {
-      weights[pos].forEach((w, i) => { const p = slots[pos][i]; v += w * (p ? starsExact(p) : FILLER.stars); });
-    }
-    return v;
-  };
-  const offBase = side(TEAM_WEIGHTS.off);
-  const defBase = side(TEAM_WEIGHTS.def);
+  const offBase = sideRating(TEAM_WEIGHTS.off, slots);
+  const defBase = sideRating(TEAM_WEIGHTS.def, slots);
   const ocBoost = save.staff && save.staff.oc ? save.staff.oc.stars * COORDINATORS.boostPerStar : 0;
   const dcBoost = save.staff && save.staff.dc ? save.staff.dc.stars * COORDINATORS.boostPerStar : 0;
   return {
@@ -172,7 +199,8 @@ export function toSquadPlayer(p) {
 
 function virtualAttrs(rng, pos, starsValue, sd) {
   const attrs = {};
-  for (const k of ATTRS[pos]) attrs[k] = clamp(2 * starsValue + rng.normal(0, sd), 1, 10);
+  const mean = Math.min(2 * starsValue, VIRTUAL.attrCap);
+  for (const k of ATTRS[pos]) attrs[k] = clamp(mean + rng.normal(0, sd), 1, 10);
   return attrs;
 }
 
