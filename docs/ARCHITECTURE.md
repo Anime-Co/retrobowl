@@ -115,21 +115,53 @@ Kinds (`setup.kind`): `'scrimmage'` (normal down; also used for the 2-pt try fro
 `'fg'`, `'pat'`, `'kick_return'` (opponent kicks off; the user controls the returner; the result's
 `endX` is the new line of scrimmage in the user's offense frame, or a touchback at the 25).
 
-## PLAY-VIEW contract (`src/play/view/`, `src/render/sprites.js|field.js|fx.js`)
+## PLAY-VIEW contract (`src/play/view/`, uses `src/render/*`)
+
+`PlayView` owns everything drawn on the canvas for ONE play and all on-field input:
+field, players, ball, pre-snap route lines + RB blue ring, aim arc (first `aim.visibleFrac`,
+shadow, landing marker when `showMarker`), bullet/run-mode indicators, kick power meter / aim arrow /
+wind icon / pressure, on-field banners ("+12", "FIRST DOWN", "TOUCHDOWN!", "INTERCEPTED",
+"SACK", "NO GOOD"...), fx, camera (follow, zoom per settings, drive direction per settings and
+orientation), on-field SFX, first-plays control tips (settings.showTips).
 
 ```js
 import { PlayView } from './src/play/view/PlayView.js';
-const view = new PlayView(app, { setup, homeLook, awayLook, hud: {...} });
-view.update(dt);   // polls app.input, maps gestures → sim commands, steps sim, camera, fx, audio
-view.render(alpha);// draws field + entities + aim/kick UI + fx into app.display
-view.done          // true after result shown and the post-play beat has elapsed
-view.result        // PlayResult
+const view = new PlayView(app, {
+  setup,                 // PlaySetup from Match
+  userLook, oppLook,     // TeamLook (abbr, city, primary, secondary, helmet)
+  driveLeft,             // boolean: landscape screen direction for this play (portrait always up)
+  onSnap,                // () => void, called once when sim.phase leaves 'presnap'
+});
+view.update(dt);          // input → sim commands, sim.update, camera, fx (skips sim when view.paused)
+view.render(alpha);       // draws into app.display (begin/present inside)
+view.paused = true|false; // MatchScreen pauses during modals; input ignored while paused
+view.changePlay();        // audible (MatchScreen enforces count via Match.useAudible())
+view.sim                  // the PlaySim (read-only for others)
+view.result               // PlayResult once the whistle blows (available immediately at whistle)
+view.done                 // true after the post-play beat (~1.2–1.8 s after the whistle; tap skips)
 view.destroy();
 ```
 
-The controller implements the control scheme in MECHANICS.md for touch and for mouse/keyboard/
-gamepad, and shows minimal on-canvas hints the first few plays. Sprites are procedurally drawn
-pixel art (original designs) in team colours, cached per team/facing/frame.
+`IdleFieldView` (same module) draws the field with players standing at a given spot, used by
+MatchScreen behind opponent-drive text boxes and between steps: `new IdleFieldView(app,
+{losX, userLook, oppLook, driveLeft}); .update(dt); .render(alpha)`.
+
+A dev `sandbox` screen (`src/play/view/SandboxScreen.js`, registered as `sandbox`) runs endless
+single plays with test squads for tuning the feel; reachable via `?sandbox` URL param.
+
+## MATCH-SCREEN contract (`src/match/MatchScreen.js`, `src/match/hud.js`)
+
+The `match` screen (params `{gameId}`) drives `Match` (src/match/logic) step by step using
+franchise `matchSetup(save)` + user settings, shows the stage, creates a `PlayView` for each
+`play` / `kick` / `kick_return` step (submitting `view.result` to `m.submitPlay` at the whistle),
+calls `m.onSnap()` via `onSnap`, ticks `m.tickClock(dt)` while `m.state.clockRunning`, and owns the
+DOM HUD in `app.hudEl`: scorebug (abbrs in team colours, scores, quarter, clock — tap for timeout
+with pips, down & distance, ball spot), Change Play button with count, pause menu (resume /
+settings toggles / quit to hub), decision modals (4th down, conversion, onside, end-of-half FG
+button on `canFieldGoal`), opponent-drive text boxes over an `IdleFieldView`, quarter / halftime /
+OT / final overlays, then `applyUserGameResult` → `app.persist()` → `app.go('postGame', {gameId,
+result, summary})`. Mid-game state is not persisted (quitting forfeits nothing: the game stays
+unplayed).
 
 ## FRANCHISE contract (`src/franchise/`)
 
@@ -155,13 +187,12 @@ freeAgents(save); signFreeAgent(save, id)
 resolveNews(save, newsId, choiceIndex)
 ```
 
-## MATCH contract (`src/match/`)
+## MATCH-LOGIC contract (`src/match/logic/`)
 
-`src/match/logic/` (DOM-free): `Match` state machine (quarters, clock, downs, possession, score,
-timeouts, decisions), `simDrive()` for opponent possessions, `simulateGame()` for AI-vs-AI.
-`src/match/MatchScreen.js`: the `match` screen — shows the stage, runs `PlayView` for user snaps,
-shows opponent drive summaries, 4th-down / conversion decisions, scorebug HUD, end-of-quarter and
-final screens, then calls `applyUserGameResult` and goes to `postGame`.
+DOM-free `Match` state machine — see the header of `src/match/logic/Match.js` for the exact Step
+types (`coin`, `kick_return`, `play`, `decision`, `kick`, `opp_drive`, `auto`, `quarter_end`,
+`halftime`, `ot_start`, `final`) and methods (`next`, `ack`, `choose`, `submitPlay`, `onSnap`,
+`tickClock`, `callTimeout`, `useAudible`, `fieldGoalAvailable`).
 
 ## Testing
 
