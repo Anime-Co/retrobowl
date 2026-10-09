@@ -1,5 +1,5 @@
 // UI flow: drives a whole career loop through the menu screens with real clicks:
-// title → help/settings → new career → hub tabs, player card, signing → PLAY (match stub) →
+// title → help/settings → new career → hub tabs, player card, signing → PLAY (match, autoplayed) →
 // post-game → … (middle weeks fast-forwarded through the franchise API) → playoffs → every
 // offseason step → season 2, then a forced firing → job offer. Fails on console errors, horizontal
 // overflow or primary buttons clipped off-screen.
@@ -205,13 +205,17 @@ export async function runFlow(page, o) {
   }
   await click('[data-tab="home"]');
 
-  // Play a game through the stub with the match engine, then one quick sim
+  // Play games through the real match screen: click PLAY, then hand the same game to the bot
+  // (autoplay) so the flow stays fast. Match-screen controls are covered by match-flow.mjs.
   const playOne = async (kind, shots) => {
     await click('#btn-play');
     await waitScreen('match');
-    if (shots) await visit('match-stub');
-    await click(kind === 'auto' ? '#stub-auto' : '#stub-sim');
-    await waitScreen('postGame', 15000);
+    if (shots) await visit('match');
+    await page.evaluate(() => {
+      const app = window.__app;
+      app.go('match', { gameId: app.current.gameId, autoplay: true, speed: 16 });
+    });
+    await waitScreen('postGame', 120000);
     if (shots) await visit('postgame', '#btn-continue');
     await click('#btn-continue');
     await page.waitForFunction(() => ['hub', 'offseason', 'fired'].includes(window.__app.currentName));

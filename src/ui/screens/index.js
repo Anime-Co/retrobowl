@@ -7,8 +7,7 @@ import { OffseasonScreen } from './offseason.js';
 import { FiredScreen } from './fired.js';
 import { SettingsScreen } from './settings.js';
 import { HelpScreen } from './help.js';
-// TEMPORARY: replace with the real MatchScreen (src/match/MatchScreen.js) when it lands.
-import { MatchStubScreen } from './matchStub.js';
+import { MatchScreen } from '../../match/MatchScreen.js';
 
 export function registerScreens(app) {
   app.register('title', TitleScreen);
@@ -19,5 +18,5 @@ export function registerScreens(app) {
   app.register('fired', FiredScreen);
   app.register('settings', SettingsScreen);
   app.register('help', HelpScreen);
-  app.register('match', MatchStubScreen);
+  app.register('match', MatchScreen);
 }
