@@ -64,7 +64,7 @@ test('new franchise invariants', () => {
   assert.ok(team.roster.length >= 8 && team.roster.length <= 9);
   assert.ok(team.roster.some((p) => p.pos === 'QB'));
   for (const p of team.roster) {
-    assert.ok(F.stars(p) >= 1 && F.stars(p) <= 3, `start stars ${F.stars(p)}`);
+    assert.ok(F.stars(p) >= 1.5 && F.stars(p) <= 3, `start stars ${F.stars(p)}`);
     assert.deepEqual(Object.keys(p.attrs).sort(), [...F.ATTRS[p.pos]].sort());
     for (const v of Object.values(p.attrs)) assert.ok(Number.isInteger(v) && v >= 1 && v <= 10);
     assert.ok(p.potential >= F.attrSum(p) && p.potential <= 40);
@@ -72,7 +72,7 @@ test('new franchise invariants', () => {
     assert.equal(p.contract.salary % 100, 0);
   }
   const mostlyLow = team.roster.filter((p) => F.stars(p) <= 2.5).length;
-  assert.ok(mostlyLow >= team.roster.length - 1);
+  assert.ok(mostlyLow >= team.roster.length - 2);
   assert.deepEqual(save.facilities, { stadium: 1, training: 1, rehab: 1 });
   assert.equal(save.cc, 6);
   assert.equal(save.fans, 50);
@@ -317,7 +317,7 @@ test('squad: user stars fill slots, fillers elsewhere, skills normalized', () =>
   assert.ok(fillers.length > 10);
   for (const f of fillers) {
     const key = { QB: 'accuracy', RB: 'speed', WR: 'hands', TE: 'hands', OL: 'blocking', DL: 'tackling', LB: 'tackling', DB: 'tackling', K: 'kickPower' }[f.pos];
-    assert.ok(f[key] >= 0.1 && f[key] <= 0.3, `filler ${f.pos} ${key} ${f[key]}`);
+    assert.ok(f[key] >= 0.05 && f[key] <= 0.2, `filler ${f.pos} ${key} ${f[key]}`);
   }
   const nums = all.map((p) => p.number);
   assert.equal(new Set(nums).size, nums.length, 'unique jersey numbers');
@@ -672,4 +672,16 @@ test('free agency: pool size, fee, cap/roster/CC checks', () => {
   assert.ok(!save.freeAgents.some((p) => p.id === fa[0].id));
   assert.equal(res.player.ask, undefined);
   deepFinite(save);
+});
+
+test('any star beats a generic filler on key attributes', () => {
+  // Design invariant (MECHANICS §6.1): signing a star always upgrades the position.
+  for (let seed = 1; seed <= 20; seed++) {
+    const save = F.newFranchise({ coachName: 'T', teamId: 'BOS', seed });
+    const sq = F.buildSquad(save, 'BOS', { opponent: false });
+    const all = [sq.offense.QB, sq.offense.RB, ...sq.offense.WR, ...sq.offense.TE, ...sq.offense.OL, sq.offense.K, ...sq.defense.DL, ...sq.defense.LB, ...sq.defense.DB];
+    const key = { QB: 'accuracy', RB: 'speed', WR: 'hands', TE: 'hands', OL: 'blocking', DL: 'tackling', LB: 'tackling', DB: 'tackling', K: 'kickPower' };
+    const fillerMax = Math.max(...all.filter((p) => !p.id).map((p) => p[key[p.pos]]));
+    for (const p of all.filter((x) => x.id)) assert.ok(p[key[p.pos]] > fillerMax - 0.02, `${p.pos} ${p[key[p.pos]]} vs filler ${fillerMax}`);
+  }
 });

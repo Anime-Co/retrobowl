@@ -30,6 +30,10 @@ export const STAR_WEIGHTS = {
 /** Generation noise and hidden potential (MECHANICS §6.3/§6.4). growth = extra attribute points. */
 export const GENERATION = {
   attrSd: 1.2,
+  // Key attributes (star weight >= keyWeight) never roll below the star target and get less noise,
+  // so e.g. a 2★ RB can't have 2 speed.
+  keyWeight: 0.3,
+  keySd: 0.6,
   // [minGrowth, maxGrowth] attribute points above the current sum, by age
   growthByAge: [
     [21, 4, 14], [22, 3, 13], [23, 3, 11], [24, 2, 9], [25, 1, 7],
@@ -336,7 +340,9 @@ export const WEATHER = {
 };
 
 /** Generic fillers (MECHANICS §6.1). */
-export const FILLER = { skillMin: 0.15, skillMax: 0.25, stars: 1.25, level: 1 };
+// Replacement-level players in empty slots. Must stay clearly below any star (a 1.5★ star's key
+// attributes start at 3 → skill ≈ 0.22), so signing a star always upgrades the position.
+export const FILLER = { skillMin: 0.08, skillMax: 0.14, stars: 0.75, level: 1 };
 
 /** Team OFF/DEF from starters (MECHANICS §6.2). Weights per slot (sum 1 per side). */
 export const TEAM_WEIGHTS = {
@@ -376,8 +382,8 @@ export const FREE_AGENCY = {
 export const START_ROSTER = {
   core: ['QB', 'RB', 'WR', 'WR', 'OL', 'DL', 'LB', 'DB'],
   extra: ['TE', 'K', 'OL', 'DL', 'DB'],
-  qbStars: [[1.5, 3], [2, 4], [2.5, 2]],
-  stars: [[1, 3], [1.5, 4], [2, 4], [2.5, 2], [3, 0.4]],
+  qbStars: [[2, 3], [2.5, 3], [3, 1]],
+  stars: [[1.5, 3], [2, 4], [2.5, 3], [3, 0.6]],
   ageMin: 22,
   ageMax: 31,
 };

@@ -132,12 +132,16 @@ export function makeAttrs(rng, pos, targetStars) {
   const w = STAR_WEIGHTS[pos];
   const target = clamp(Math.round(targetStars * 2), 1, 10);
   const attrs = {};
-  for (const k of keys) attrs[k] = clamp(Math.round(target + rng.normal(0, GENERATION.attrSd)), ATTR.min, ATTR.max);
+  const isKey = (k) => w[k] >= GENERATION.keyWeight;
+  for (const k of keys) {
+    const v = Math.round(target + rng.normal(0, isKey(k) ? GENERATION.keySd : GENERATION.attrSd));
+    attrs[k] = clamp(isKey(k) ? Math.max(v, target) : v, ATTR.min, ATTR.max);
+  }
   for (let i = 0; i < 400; i++) {
     const m = Math.round(weightedMean(pos, attrs));
     if (m === target) break;
     const dir = m < target ? 1 : -1;
-    const cands = keys.filter((k) => (dir > 0 ? attrs[k] < ATTR.max : attrs[k] > ATTR.min));
+    const cands = keys.filter((k) => (dir > 0 ? attrs[k] < ATTR.max : attrs[k] > ATTR.min && !(isKey(k) && attrs[k] <= target)));
     if (!cands.length) break;
     const k = rng.weighted(cands, cands.map((c) => w[c]));
     attrs[k] += dir;
