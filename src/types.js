@@ -162,6 +162,17 @@
  * @property {string|null} kicker
  * @property {Object<string, Object<string, number>>} stats   per franchise player id: {passAtt, passCmp, passYds, passTd, int, rushAtt, rushYds, rushTd, rec, recYds, recTd, fgAtt, fgMade, patAtt, patMade, sacked}
  * @property {string[]} highlights    short text lines for the play-by-play ticker
+ * @property {{playerId:string, power:number}[]} hits   star carriers hit (injury rolls)
+ * @property {string|null} [returner]
+ * @property {string|null} [defender]
+ * @property {boolean} [twoPoint]
+ * @property {boolean} [twoPointGood]
+ * @property {boolean} [firstDown]
+ * @property {string} [playName]
+ * @property {number} [kickDistance]
+ * @property {boolean} [fumbleLost]
+ * @property {boolean} [defensiveTd]   pick-six / fumble return TD
+ * @property {boolean} [dive]
  */
 
 /**
