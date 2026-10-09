@@ -1,6 +1,7 @@
 // Post-game: final score banner, box score (MatchResult.summary), player of the game and the
 // franchise PostGameSummary (CC, XP & level-ups, injuries, morale, fans, owner, records, news).
-// Params: {gameId, result: MatchResult (summary optional), summary: PostGameSummary}
+// Params: {gameId, result: MatchResult (summary optional), summary: PostGameSummary, restored?}
+// (restored: reopened from save.pendingPostGame after a reload or from the hub's Game recap)
 // Continue advances the week (AI games, upkeep) and returns to the hub / offseason.
 
 import { h, toast } from '../dom.js';
@@ -64,8 +65,10 @@ export class PostGameScreen {
     this.offKeys = screenKeys((e) => {
       if (e.key === 'Enter' && document.activeElement === document.body) { e.preventDefault(); this.continueBtn.click(); }
     });
-    app.sfx(sum.champion ? 'touchdown' : sum.won ? 'good' : sum.lost ? 'bad' : 'whistle');
-    app.vibrate(sum.won ? 40 : 20);
+    if (!this.params.restored) {
+      app.sfx(sum.champion ? 'touchdown' : sum.won ? 'good' : sum.lost ? 'bad' : 'whistle');
+      app.vibrate(sum.won ? 40 : 20);
+    }
   }
 
   unmount() {
@@ -77,6 +80,7 @@ export class PostGameScreen {
     this.done = true;
     const app = this.app;
     const save = app.save;
+    delete save.pendingPostGame;
     const r = F.advanceWeek(save);
     if (!r.ok && r.reason !== 'offseason') toast(r.message);
     app.persist();

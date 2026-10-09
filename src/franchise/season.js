@@ -553,7 +553,7 @@ export function applyUserGameResult(save, mr) {
     injuries,
     moraleChanges,
     teamMoraleDelta: base + leader,
-    fansDelta: save.fans - fansBefore,
+    fansDelta: round1(save.fans - fansBefore),
     jobSecurityDelta: round1(save.jobSecurity - jsBefore),
     difficulty: diff,
     news,
@@ -597,6 +597,41 @@ export function matchSetup(save) {
     snowEligible: !g.neutral && WEATHER.northern.includes(home.id) && (g.playoff || g.week >= WEATHER.snowFromWeek),
     seed: hashStr(`${save.seed}|match|${g.id}`),
   };
+}
+
+// ------------------------------------------------------------------- post-game recap
+
+/**
+ * Keep the post-game screen data of the user's just-finished game in the save, so a reload (or
+ * the hub) can bring the recap back until the week is advanced. `result` is slimmed to what the
+ * post-game screen shows (scores, per-player stats, box score).
+ * @param {Save} save
+ * @param {Object} summary  PostGameSummary from applyUserGameResult
+ * @param {Object} [result] MatchResult
+ */
+export function setPendingPostGame(save, summary, result = {}) {
+  if (!summary) return;
+  const r = result || {};
+  save.pendingPostGame = {
+    gameId: summary.gameId,
+    summary,
+    result: {
+      gameId: summary.gameId,
+      userScore: r.userScore ?? summary.userScore,
+      oppScore: r.oppScore ?? summary.oppScore,
+      ot: !!(r.ot ?? summary.ot),
+      stats: r.stats || {},
+      summary: r.summary || null,
+    },
+  };
+}
+
+/** The stored recap when it still belongs to this week's (played) user game, else null. */
+export function pendingPostGame(save) {
+  const pg = save && save.pendingPostGame;
+  if (!pg || save.fired || save.season.phase === 'offseason') return null;
+  const g = userGameThisWeek(save);
+  return g && g.played && g.id === pg.gameId ? pg : null;
 }
 
 // --------------------------------------------------------------------- auto-play (sim)
@@ -754,6 +789,7 @@ export function advanceWeek(save) {
   if (phase0 === 'offseason') return fail('offseason', 'The season is over.');
   const ug = userGameThisWeek(save);
   if (ug && !ug.played) return fail('userGamePending', 'Play your game first.', { gameId: ug.id });
+  delete save.pendingPostGame; // the recap of this week's game is no longer reachable
   const rng = rngOf(save);
   const results = simWeek(save, rng);
   leagueHeadlines(save, currentWeekGames(save));
@@ -941,7 +977,8 @@ function prepareStep(save, rng, step) {
       generateCoordinatorMarket(save, rng);
       d.staff = {
         expiring: ['oc', 'dc'].filter((role) => save.staff[role] && save.staff[role].years <= 1 && save.staff[role].hiredOffseason !== save.offseason.year),
-        current: { oc: save.staff.oc, dc: save.staff.dc },
+        // copies, not references: a JSON reload must not change what this snapshot says
+        current: { oc: save.staff.oc ? { ...save.staff.oc } : null, dc: save.staff.dc ? { ...save.staff.dc } : null },
       };
       break;
     case 'draft':

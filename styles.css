@@ -1,6 +1,38 @@
 /* Pocket Gridiron — base styles. Pixel UI primitives shared by all screens.
    Screen-specific styles live further down, grouped by screen. */
 
+/* Offline fallbacks for the two pixel fonts. When Google Fonts can't load, the stack falls back
+   to a local monospace face that is scaled (size-adjust) to the pixel font's metrics, so layouts
+   keep their line lengths instead of blowing up:
+     VT323           advance 0.40em, cap 0.56em  → mono (advance ~0.60em) at ~68%
+     Press Start 2P  advance 1.00em, cap ~0.9em  → bold mono (cap ~0.73em) at ~128%: same height,
+                     a little narrower, so anything that fits the real font fits the fallback.
+   Consolas is narrower (0.55em), so it gets its own, larger factor. */
+@font-face {
+  font-family: 'PG Body Consolas';
+  src: local('Consolas');
+  size-adjust: 74%;
+}
+@font-face {
+  font-family: 'PG Body Mono';
+  src: local('Menlo'), local('Menlo-Regular'), local('SF Mono'), local('SFMono-Regular'), local('DejaVu Sans Mono'), local('DejaVuSansMono'),
+    local('Liberation Mono'), local('LiberationMono-Regular'), local('Noto Sans Mono'), local('NotoSansMono-Regular'),
+    local('Roboto Mono'), local('RobotoMono-Regular'), local('Droid Sans Mono'), local('DroidSansMono'), local('Courier New'), local('CourierNewPSMT');
+  size-adjust: 68%;
+}
+@font-face {
+  font-family: 'PG Display Consolas';
+  src: local('Consolas Bold'), local('Consolas-Bold');
+  size-adjust: 136%;
+}
+@font-face {
+  font-family: 'PG Display Mono';
+  src: local('Menlo Bold'), local('Menlo-Bold'), local('SF Mono Bold'), local('SFMono-Bold'), local('DejaVu Sans Mono Bold'), local('DejaVuSansMono-Bold'),
+    local('Liberation Mono Bold'), local('LiberationMono-Bold'), local('Noto Sans Mono Bold'), local('NotoSansMono-Bold'),
+    local('Roboto Mono Bold'), local('RobotoMono-Bold'), local('Courier New Bold'), local('CourierNewPS-BoldMT');
+  size-adjust: 128%;
+}
+
 :root {
   --bg: #0e2a17;
   --bg-2: #143a21;
@@ -19,8 +51,8 @@
   --turf: #2f8a3e;
   --turf-dark: #277533;
   --shadow: #05060a;
-  --font-display: 'Press Start 2P', ui-monospace, Menlo, Consolas, monospace;
-  --font-body: 'VT323', ui-monospace, Menlo, Consolas, monospace;
+  --font-display: 'Press Start 2P', 'PG Display Consolas', 'PG Display Mono', ui-monospace, Menlo, Consolas, monospace;
+  --font-body: 'VT323', 'PG Body Consolas', 'PG Body Mono', ui-monospace, Menlo, Consolas, monospace;
   --px: 3px; /* chunky border unit */
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
@@ -287,28 +319,39 @@ table.tbl .num { text-align: right; }
 .modal h2 { font-family: var(--font-display); font-size: 12px; text-transform: uppercase; margin: 0 0 10px; color: var(--accent); line-height: 1.4; }
 .modal .body { font-size: 20px; margin-bottom: 14px; }
 
+/* Toasts sit low, above the bottom tab bar / screen footers, so they never cover the team header
+   (name, record, CC) or the primary buttons. */
 .toast-wrap {
   position: absolute;
   left: 0; right: 0;
-  top: calc(var(--safe-t) + 10px);
+  bottom: calc(var(--safe-b) + 78px);
   display: flex;
-  flex-direction: column;
+  flex-direction: column-reverse;
   align-items: center;
   gap: 6px;
+  padding: 0 calc(var(--safe-r) + 12px) 0 calc(var(--safe-l) + 12px);
   pointer-events: none;
   z-index: 50;
 }
 
 .toast {
+  max-width: min(520px, 100%);
   font-family: var(--font-display);
   font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
   background: var(--panel);
   border: var(--px) solid var(--accent);
+  box-shadow: 0 var(--px) 0 var(--shadow);
   padding: 8px 12px;
   animation: toast-in 0.18s steps(3) both;
 }
 
-@keyframes toast-in { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (orientation: landscape) and (max-height: 540px) {
+  .toast-wrap { bottom: calc(var(--safe-b) + 62px); padding-left: calc(var(--safe-l) + 80px); }
+}
 
 input[type="text"], select {
   font-family: var(--font-body);
@@ -859,7 +902,7 @@ table.tbl th.c, table.tbl td.c { text-align: center; }
 .off-steps li b, .off-steps li span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .off-steps li.done { background: var(--good); }
 .off-steps li.on { background: var(--accent); }
-.off-body { padding-bottom: 8px; }
+.off-body { padding-bottom: 8px; outline: none; }
 .off-foot { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 2px solid var(--panel-3); }
 .off-foot .btn.primary { min-width: 170px; margin-left: auto; }
 .off-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -1154,7 +1197,8 @@ table.tbl th.c, table.tbl td.c { text-align: center; }
   .pg-abbr { font-size: 8px; }
 }
 .off-title { flex-wrap: wrap; }
-.off-title > div:nth-child(2) { min-width: 96px; }
+.off-title > div:nth-child(2) { flex: 1 1 0; min-width: 96px; }
+.off-step { overflow-wrap: anywhere; }
 .off-tools { margin-left: auto; }
 @media (max-width: 359px) {
   .seg-btn { padding: 8px 6px; font-size: 8px; }
@@ -1165,6 +1209,34 @@ table.tbl th.c, table.tbl td.c { text-align: center; }
   .prospect { padding: 6px; gap: 4px; }
 }
 .help-card .help-illo { align-self: stretch; }
+
+.title-warn { margin: 0; max-width: 520px; font-size: 16px; line-height: 1.15; text-align: center; color: #ffd6d2; background: rgba(138, 38, 32, 0.85); border: 2px solid var(--bad); padding: 4px 8px; }
+.alert.static { cursor: default; }
+.news-card:focus, .hub-body:focus { outline: none; }
+
+/* Box score totals: the label column wraps instead of pushing the table past narrow screens. */
+.box-tot { table-layout: fixed; }
+.box-tot th.num, .box-tot td.num { width: 30%; }
+.box-tot td { white-space: normal; overflow-wrap: anywhere; }
+
+/* Sheet actions (sign / confirm) stay reachable: they stick to the bottom of a scrolling sheet
+   (short landscape phones, 320px portrait). */
+.sheet-body > .sheet-foot, .sheet-body > .confirm-actions {
+  position: sticky; bottom: 0; z-index: 2; background: var(--panel); padding: 10px 0 2px; box-shadow: 0 -2px 0 var(--panel-3);
+}
+.sheet-foot .sheet-actions { margin-top: 0; }
+.sheet-block { margin: 0 0 8px; font-size: 18px; }
+.pr-note { margin: 0; }
+.mt-stats { grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); }
+
+/* Big screens (1080p desktop and up): scale the whole menu UI so it reads like a game, not a
+   tiny web page. `zoom` keeps every pixel size in proportion (borders, fonts, tap targets). */
+:root { --ui-zoom: 1; }
+@media (min-width: 1440px) and (min-height: 860px) { :root { --ui-zoom: 1.2; } }
+@media (min-width: 1760px) and (min-height: 980px) { :root { --ui-zoom: 1.35; } }
+@media (min-width: 2400px) and (min-height: 1300px) { :root { --ui-zoom: 1.75; } }
+#ui > .screen:not(.title-screen), #ui > .screen-overlay, .toast-wrap,
+.title-menu, .title-tag, .title-credits, #hud .mhud { zoom: var(--ui-zoom); }
 
 /* Tap targets: keep every control on the menu screens at 44px or more. */
 :is(.hub, .ng, .pg, .off, .fired, .settings, .help, .stub, .title-screen, .sheet) .btn.small { min-height: 44px; }
@@ -1383,6 +1455,28 @@ table.tbl th.c, table.tbl td.c { text-align: center; }
   .mh-sit { display: flex; align-items: center; justify-content: center; border-top: 0; border-left: 2px solid var(--shadow); padding: 0 10px; font-size: 9px; min-width: 0; }
   .mh-pause { position: absolute; right: 0; top: 0; }
   .mh-mid { padding: 6px 0; }
+}
+/* Landscape phones: a slim one-row scorebug (~32px instead of ~50px) so it covers less of the
+   field. Visually small controls keep a 44px+ touch target through an invisible ::after hit area. */
+@media (orientation: landscape) and (max-height: 500px) {
+  #hud .mhud { padding-top: calc(var(--safe-t) + 4px); padding-bottom: calc(var(--safe-b) + 4px); }
+  .mh-bug { border-width: 2px; box-shadow: 0 2px 0 var(--shadow); }
+  .mh-chip { font-size: 8px; padding: 0 5px; }
+  .mh-chip.abbr { min-width: 32px; }
+  .mh-pts { font-size: 12px; min-width: 26px; padding: 0 5px; }
+  .mh-clock { position: relative; flex-direction: row; min-height: 28px; min-width: 0; padding: 0 8px; gap: 7px; font-size: 10px; }
+  .mh-pips { flex-direction: column; gap: 2px; }
+  .mh-pips i { width: 8px; height: 3px; }
+  .mh-sit { font-size: 8px; padding: 0 8px; }
+  .mh-pause { width: 34px; height: 34px; border-width: 2px; box-shadow: 0 2px 0 var(--shadow); }
+  .mh-btn { min-height: 34px; padding: 4px 9px; border-width: 2px; position: relative; }
+  .mh-bottom { min-height: 34px; }
+  .mh-pause { position: absolute; }
+  .mh-clock::after, .mh-pause::after, .mh-btn::after { content: ''; position: absolute; }
+  .mh-clock::after { left: 0; right: 0; top: -9px; bottom: -13px; }
+  .mh-pause::after { left: -8px; right: -6px; top: -6px; bottom: -12px; }
+  .mh-btn::after { left: -2px; right: -2px; top: -12px; bottom: -6px; }
+  .mh-flash { top: calc(100% + 6px); }
 }
 @media (orientation: landscape) and (max-height: 420px) {
   .mh-banner, .mh-box, .mh-final { padding: 10px 14px 8px; }

@@ -16,6 +16,7 @@
 //      auto-pause, rotation mid-play (portrait), and — with the real PlayView — a held slingshot
 //      drag (aim arc screenshot).
 //   D. (portrait) the clock running out before the snap withdraws the play ("TIME!").
+//   F. (portrait) 3- and 1-minute quarters: timeouts per half (3 / 2) show as scorebug pips.
 // Fails (exit 1) on console errors, layout problems or broken flow. Screenshots: test-results/.
 
 import { existsSync } from 'node:fs';
@@ -31,7 +32,7 @@ const SPEED = 6;
 const REAL_VIEW = existsSync(join(ROOT, 'src/play/view/PlayView.js'));
 
 const VIEWPORTS = [
-  { name: 'portrait', opts: { mobile: true }, runs: 'ABCD' },
+  { name: 'portrait', opts: { mobile: true }, runs: 'ABCDF' },
   { name: 'landscape', opts: { mobile: true, landscape: true }, runs: 'AB' },
   { name: 'desktop', opts: { viewport: { width: 1280, height: 720 } }, runs: 'ABC' },
   { name: 'narrow', opts: { mobile: true, viewport: { width: 320, height: 568 } }, runs: 'A' },
@@ -85,10 +86,25 @@ async function layoutProblems(page) {
       rects[sel] = r;
       if (r.left < -0.5 || r.top < -0.5 || r.right > W + 0.5 || r.bottom > H + 0.5) out.push(`${sel} off-screen (${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)} in ${W}x${H})`);
     }
+    // Touch targets: measure what a finger can actually hit (elementFromPoint), so visually slim
+    // controls with an invisible ::after hit area (landscape scorebug) count at their real size.
+    const hitSize = (el, r) => {
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const on = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === el || el.contains(e)); };
+      if (!on(cx, cy)) return null; // covered by a modal: not tappable right now
+      let t = cy; let b = cy; let l = cx; let rr = cx;
+      while (t > 0 && on(cx, t - 1)) t--;
+      while (b < H - 1 && on(cx, b + 1)) b++;
+      while (l > 0 && on(l - 1, cy)) l--;
+      while (rr < W - 1 && on(rr + 1, cy)) rr++;
+      return { w: rr - l + 1, h: b - t + 1 };
+    };
     for (const el of document.querySelectorAll('#hud button, .mh-overlay button')) {
       const r = vis(el);
       if (!r) continue;
-      if (r.width < 43.5 || r.height < 43.5) out.push(`button ${name(el)} smaller than 44px (${Math.round(r.width)}x${Math.round(r.height)})`);
+      const hs = hitSize(el, r);
+      if (hs && (hs.w < 43.5 || hs.h < 43.5)) out.push(`button ${name(el)} touch target smaller than 44px (${Math.round(hs.w)}x${Math.round(hs.h)}, drawn ${Math.round(r.width)}x${Math.round(r.height)})`);
     }
     const overlap = (a, b) => a && b && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
     const pairs = [['.mh-bug', '.mh-pause'], ['.mh-cp', '.mh-fg'], ['.mh-bug', '.mh-box'], ['.mh-bug', '.mh-banner'], ['.mh-bug', '.mh-final'], ['.mh-box', '.mh-cp'], ['.mh-final', '.mh-cp']];
@@ -96,10 +112,12 @@ async function layoutProblems(page) {
     // keep the critical play area clear: top bar and bottom buttons hug the edges
     const bug = rects['.mh-bug'];
     const landscape = W >= H;
-    if (bug && bug.bottom > Math.max(landscape ? 66 : 84, H * (landscape ? 0.15 : 0.09))) out.push(`scorebug too tall: bottom at ${Math.round(bug.bottom)} of ${H}`);
+    // landscape phones get the slim one-row bug (~32px): keep it under ~11% of the screen height
+    const slim = landscape && H <= 500;
+    if (bug && bug.bottom > (slim ? Math.max(40, H * 0.11) : Math.max(landscape ? 66 : 84, H * (landscape ? 0.15 : 0.09)))) out.push(`scorebug too tall: bottom at ${Math.round(bug.bottom)} of ${H}`);
     for (const sel of ['.mh-cp', '.mh-fg']) {
       const r = rects[sel];
-      if (r && r.top < H * (landscape ? 0.8 : 0.9)) out.push(`${sel} intrudes into the field: top ${Math.round(r.top)} of ${H}`);
+      if (r && r.top < H * (landscape ? (slim ? 0.86 : 0.8) : 0.9)) out.push(`${sel} intrudes into the field: top ${Math.round(r.top)} of ${H}`);
     }
     // legibility: no HUD text under 8px
     for (const el of document.querySelectorAll('#hud .mhud *, .mh-overlay *')) {
@@ -533,6 +551,31 @@ async function runClockOut(vp, ctx) {
     `[${vp}] clock expiring before the snap withdraws the play (TIME!) and moves on to ${a ? a.type : 'nothing'}`);
 }
 
+// ------------------------------------------------------------------------------- F. quarter length
+
+async function runQuarterLength(vp, ctx) {
+  const { page } = ctx;
+  for (const minutes of [3, 1]) {
+    const gameId = await setupCareer(page, 5005 + minutes, { quarterMinutes: minutes });
+    await page.evaluate(({ gameId, stub }) => {
+      window.__app.go('match', { gameId, autoplay: true, speed: 4, stub });
+      window.__match.holdSnap = (m, step) => step.type === 'play';
+    }, { gameId, stub: STUB });
+    await page.waitForFunction(() => window.__match && window.__match.presnap() && window.__match.step.type === 'play', null, { timeout: 60000 }).catch(() => {});
+    const r = await page.evaluate(() => ({
+      pips: document.querySelectorAll('.mh-pips i').length,
+      on: document.querySelectorAll('.mh-pips i.on').length,
+      timeouts: window.__match.m.state.timeouts.user,
+      qm: window.__match.m.state.quarterMinutes,
+      start: window.__match.m.state.clock,
+    }));
+    const want = minutes === 3 ? 3 : 2;
+    check(r.qm === minutes && r.pips === want && r.on === want && r.timeouts === want && r.start <= minutes * 60,
+      `[${vp}] ${minutes}-minute quarters: ${r.pips} timeout pips (${r.on} lit), clock from ${minutes}:00`);
+    await page.evaluate(() => window.__app.go('hub'));
+  }
+}
+
 // ------------------------------------------------------------------------------- E. rotation
 
 async function rotateCheck(vp, ctx) {
@@ -553,7 +596,7 @@ async function rotateCheck(vp, ctx) {
 
 console.log(`match-flow: PlayView ${STUB ? 'stub (forced)' : REAL_VIEW ? 'real (src/play/view/PlayView.js)' : 'stub (real PlayView missing)'}`);
 for (const v of VIEWPORTS) {
-  for (const [label, fn] of [['A autoplay', runAutoplay], ['B manual HUD', runManualHud], ['C hand-driven', runHandDriven], ['D clock out', runClockOut]]) {
+  for (const [label, fn] of [['A autoplay', runAutoplay], ['B manual HUD', runManualHud], ['C hand-driven', runHandDriven], ['D clock out', runClockOut], ['F quarter length', runQuarterLength]]) {
     if (!v.runs.includes(label[0])) continue;
     console.log(`[${v.name}] ${label}`);
     await withBrowser(v.opts, async (ctx) => {

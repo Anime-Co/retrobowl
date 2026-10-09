@@ -165,8 +165,9 @@ DOM HUD in `app.hudEl`: scorebug (abbrs in team colours, scores, quarter, clock 
 with pips, down & distance, ball spot), Change Play button with count, pause menu (resume /
 settings toggles / quit to hub), decision modals (4th down, conversion, onside, end-of-half FG
 button on `canFieldGoal`), opponent-drive text boxes over an `IdleFieldView`, quarter / halftime /
-OT / final overlays, then `applyUserGameResult` → `app.persist()` → `app.go('postGame', {gameId,
-result, summary})`. Mid-game state is not persisted (quitting forfeits nothing: the game stays
+OT / final overlays, then `applyUserGameResult` → `setPendingPostGame` → `app.persist()` →
+`app.go('postGame', {gameId, result, summary})`. The recap stays in `save.pendingPostGame` until the
+week advances, so title Continue / the hub's "Game recap" button can reopen it after a reload. Mid-game state is not persisted (quitting forfeits nothing: the game stays
 unplayed).
 
 ## FRANCHISE contract (`src/franchise/`)

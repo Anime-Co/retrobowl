@@ -7,6 +7,7 @@ import * as F from '../../franchise/index.js';
 import { FieldBackdrop } from './backdrop.js';
 import { btn, confirmDialog, reducedMotion, setVars, teamVars, screenKeys } from './common.js';
 import { phaseText } from './widgets.js';
+import { storageAvailable } from '../../core/storage.js';
 
 /** Draw the "POCKET GRIDIRON" logo into a canvas at 1 virtual px per font pixel. */
 export function drawLogo(canvas) {
@@ -82,7 +83,8 @@ export class TitleScreen {
     let cont = null;
     if (save) {
       const t = F.userTeam(save);
-      cont = btn(app, h('span.tb-stack', h('span', 'Continue'), h('span.tb-sub', `${t.city} · ${F.recordText(t.record)} · ${save.season.year} ${phaseText(save)}`)),
+      const where = save.fired ? 'Job offers waiting' : `${save.season.year} ${phaseText(save)}`;
+      cont = btn(app, h('span.tb-stack', h('span', 'Continue'), h('span.tb-sub', `${t.city} · ${F.recordText(t.record)} · ${where}`)),
         () => this.resume(), { kind: 'primary', block: true, icon: 'play', sfx: 'select', id: 'btn-continue' });
       setVars(cont, teamVars(t.colors));
       cont.classList.add('team-edge');
@@ -102,6 +104,7 @@ export class TitleScreen {
             btn(app, 'How to Play', () => app.go('help', { from: 'title' }), { block: true, icon: 'info', id: 'btn-help' }),
           ),
         ),
+        storageAvailable() ? null : h('p.title-warn', { role: 'note' }, 'Saving is blocked in this browser, so your career is lost when you close the page.'),
         h('p.title-credits', 'Original game inspired by classic arcade football'),
       ),
     );
@@ -128,8 +131,10 @@ export class TitleScreen {
   resume() {
     const app = this.app;
     if (!app.save) return;
+    const pg = F.pendingPostGame(app.save);
     if (app.save.fired) app.go('fired');
     else if (app.save.season.phase === 'offseason') app.go('offseason');
+    else if (pg) app.go('postGame', { gameId: pg.gameId, result: pg.result, summary: pg.summary, restored: true });
     else app.go('hub');
   }
 

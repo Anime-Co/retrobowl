@@ -6,7 +6,7 @@
 
 import { h, toast } from '../dom.js';
 import * as F from '../../franchise/index.js';
-import { btn, icon, starRow, money, plural, segmented, toggle, confirmDialog, setVars, teamVars, ccChip, signed, helmet } from './common.js';
+import { btn, icon, starRow, money, plural, segmented, toggle, confirmDialog, setVars, teamVars, ccChip, signed, helmet, screenKeys, keepFocus } from './common.js';
 import { freeAgentList } from './hubMarket.js';
 import { capPanel } from './hubRoster.js';
 import { attrBars, POS_ORDER, rosterNeeds, playerFace, ATTR_SHORT } from './widgets.js';
@@ -30,9 +30,18 @@ export class OffseasonScreen {
     setVars(this.root, teamVars(F.userTeam(save).colors));
     root.appendChild(this.root);
     this.draw();
+    // Enter with nothing focused presses the step's primary button.
+    this.offKeys = screenKeys((e) => {
+      const ae = document.activeElement;
+      if (e.key !== 'Enter' || (ae && ae !== document.body)) return;
+      const b = this.root && this.root.querySelector('#off-primary');
+      if (b && !b.disabled) { e.preventDefault(); b.click(); }
+    });
   }
 
-  unmount() {}
+  unmount() {
+    if (this.offKeys) this.offKeys();
+  }
 
   get save() { return this.app.save; }
 
@@ -55,6 +64,7 @@ export class OffseasonScreen {
     const root = this.root;
     const prevBody = root.querySelector('.off-body');
     const st = keepScroll && prevBody ? prevBody.scrollTop : 0;
+    const refocus = keepScroll ? keepFocus(root) : null;
     while (root.firstChild) root.removeChild(root.firstChild);
     const steps = F.offseasonSteps(save);
     const cur = F.currentOffseasonStep(save);
@@ -74,11 +84,12 @@ export class OffseasonScreen {
         ),
         h('ol.off-steps', { 'aria-label': 'Offseason steps' }, steps.map((s, i) => h(`li${s.id === showing ? '.on' : s.done ? '.done' : ''}`, { title: s.label, 'aria-current': s.id === showing ? 'step' : null }, h('b', String(i + 1)), h('span', s.label)))),
       ),
-      h('div.off-body.scroll-y', view.body),
+      h('div.off-body.scroll-y', { tabindex: '-1' }, view.body),
       h('footer.off-foot', view.secondary || h('span'), view.primary),
     ));
     const body = root.querySelector('.off-body');
     if (body) body.scrollTop = st;
+    if (refocus) refocus(body);
   }
 
   next() {
@@ -363,7 +374,9 @@ export class OffseasonScreen {
       'aria-checked': p === filter ? 'true' : 'false',
       onclick: () => { app.sfx('click'); this.state.draftPos = p; this.draw(true); },
     }, p === 'ALL' ? 'All' : p === 'NEEDS' ? 'Needs' : p)));
-    const blocker = !onClock ? null : space <= 0 ? 'Roster full: release a player or pass.' : null;
+    const cheapest = F.draftProspects(save).reduce((m, p) => Math.min(m, p.salary), Infinity);
+    const blocker = !onClock ? null : space <= 0 ? 'Roster full: release a player (Roster button above) or pass.'
+      : Number.isFinite(cheapest) && cheapest > capRoom ? `No cap room for a rookie deal (${money(capRoom)} left): release a player or pass.` : null;
     const cards = prospects.slice(0, 40).map((p) => {
       const cantPay = p.salary > capRoom;
       return h(`article.prospect${p.scouted ? '.scouted' : ''}`,
@@ -392,6 +405,7 @@ export class OffseasonScreen {
             this.draw(true);
           }, { small: true, kind: 'primary', sfx: false, disabled: !!blocker || cantPay, title: blocker || (cantPay ? 'Not enough cap room' : null), attrs: { 'data-draft': p.id } }) : null,
         ),
+        onClock && !blocker && cantPay ? h('p.bad.small.pr-note', 'Not enough cap room for this rookie deal.') : null,
       );
     });
     const made = st ? st.made.slice(-8).reverse() : [];

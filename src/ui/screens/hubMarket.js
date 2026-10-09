@@ -27,8 +27,10 @@ export function openSignSheet(app, save, fa, onDone) {
           h('div', h('span.label', 'Signing fee'), h('b', `${fa.fee} CC`), h('span.dim', ` (you have ${save.cc})`)),
           h('div', h('span.label', 'Cap room after'), h('b', money(cap.room - fa.salary))),
         ),
-        fa.blocker ? h('p.bad', fa.blocker) : null,
-        h('div.btn-row.sheet-actions',
+        // sticky footer: the reason you can't sign stays next to the (disabled) Sign button
+        h('div.sheet-foot',
+          fa.blocker ? h('p.bad.sheet-block', fa.blocker) : null,
+          h('div.btn-row.sheet-actions',
           btn(app, 'Cancel', () => api.close(), { kind: 'ghost', sfx: 'back' }),
           btn(app, `Sign · ${fa.fee} CC`, () => {
             const r = F.signFreeAgent(save, fa.id, years);
@@ -39,6 +41,7 @@ export function openSignSheet(app, save, fa, onDone) {
             api.close();
             if (onDone) onDone(r);
           }, { kind: 'primary', disabled: !fa.canSign, sfx: false, id: 'btn-sign-confirm' }),
+          ),
         ),
       );
     },

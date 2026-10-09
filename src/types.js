@@ -79,6 +79,8 @@
  * @property {Object|null} draft
  * @property {{id:string, week:number, title:string, body:string, choices?:Object[], resolved?:boolean}[]} news
  * @property {Object[]} history
+ * @property {{gameId:string, summary:Object, result:Object}|null} [pendingPostGame]  post-game recap kept
+ *   until the week advances, so a reload on the post-game screen can reopen it (set via setPendingPostGame)
  */
 
 /**

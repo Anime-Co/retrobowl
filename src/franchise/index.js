@@ -62,5 +62,5 @@ export {
   newFranchise, currentWeekGames, userGameThisWeek, nextUserGame, userWeekStatus, opponentOf,
   simulateOtherGames, applyUserGameResult, simulateUserGame, matchSetup, advanceWeek, expectedWins,
   offseasonSteps, currentOffseasonStep, offseasonData, runOffseasonStep, jobOffers, takeJob,
-  hubSummary, careerHistory, resultLabel, previewLeague,
+  hubSummary, careerHistory, resultLabel, previewLeague, setPendingPostGame, pendingPostGame,
 } from './season.js';

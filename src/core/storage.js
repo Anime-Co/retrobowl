@@ -38,10 +38,31 @@ export function loadSave(slot = 0) {
   return s;
 }
 
+let lastSaveFailed = false;
+
 export function writeSave(save, slot = 0) {
   save.version = SAVE_VERSION;
   save.savedAt = Date.now();
-  return writeJSON(`save${slot}`, save);
+  const ok = writeJSON(`save${slot}`, save);
+  lastSaveFailed = !ok;
+  return ok;
+}
+
+/** True when the most recent writeSave() failed (storage blocked, full or unavailable). */
+export function saveFailed() {
+  return lastSaveFailed;
+}
+
+/** Can this browser persist anything at all? (probe write; private modes / blocked site data) */
+export function storageAvailable() {
+  try {
+    const k = key('probe');
+    localStorage.setItem(k, '1');
+    localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function hasSave(slot = 0) {

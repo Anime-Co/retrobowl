@@ -85,7 +85,7 @@ export function modal(root, { title, body, actions, dismissable = false }) {
 let toastWrap = null;
 export function toast(msg, ms = 1800) {
   if (!toastWrap || !toastWrap.isConnected) {
-    toastWrap = h('div.toast-wrap');
+    toastWrap = h('div.toast-wrap', { role: 'status', 'aria-live': 'polite' });
     document.getElementById('app').appendChild(toastWrap);
   }
   const t = h('div.toast', msg);

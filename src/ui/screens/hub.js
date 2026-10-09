@@ -4,7 +4,7 @@
 
 import { h, toast } from '../dom.js';
 import * as F from '../../franchise/index.js';
-import { icon, helmet, ccChip, meter, setVars, teamVars, screenKeys } from './common.js';
+import { icon, helmet, ccChip, meter, setVars, teamVars, screenKeys, keepFocus } from './common.js';
 import { phaseText } from './widgets.js';
 import { renderHome } from './hubHome.js';
 import { renderRoster } from './hubRoster.js';
@@ -59,6 +59,13 @@ export class HubScreen {
 
   onKey(e) {
     if (e.key === 'Escape') return;
+    // Enter with nothing focused runs the Home tab's main action (Play / Advance / Offseason).
+    const ae = document.activeElement;
+    if (e.key === 'Enter' && this.tab === 'home' && (!ae || ae === document.body)) {
+      const b = this.root.querySelector('#btn-play, #btn-advance, #btn-offseason');
+      if (b && !b.disabled) { e.preventDefault(); b.click(); }
+      return;
+    }
     // Number keys 1-6 jump between tabs on desktop.
     if (/^[1-6]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const t = HUB_TABS[Number(e.key) - 1];
@@ -82,8 +89,7 @@ export class HubScreen {
     const save = this.save;
     if (!save || !this.root) return;
     const st = keepScroll ? this.body.scrollTop : 0;
-    const ae = document.activeElement;
-    const focusKey = ae && ae.dataset && this.root.contains(ae) ? ae.dataset.fk : null;
+    const refocus = keepFocus(this.root);
     const team = F.userTeam(save);
     setVars(this.root, teamVars(team.colors));
     this.drawHead(save, team);
@@ -94,10 +100,9 @@ export class HubScreen {
     this.body.dataset.tab = tab.id;
     this.body.appendChild(tab.render(this.ctx()));
     if (keepScroll) this.body.scrollTop = st;
-    if (focusKey) {
-      const el = this.root.querySelector(`[data-fk="${CSS.escape(focusKey)}"]`);
-      if (el) el.focus({ preventScroll: true });
-    }
+    // Keyboard players keep their place across redraws; if the control is gone, focus parks on
+    // the panel (never on <body>, where Enter would start the next game).
+    if (refocus) refocus(this.body);
   }
 
   ctx() {

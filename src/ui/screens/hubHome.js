@@ -5,10 +5,12 @@ import { h, toast } from '../dom.js';
 import * as F from '../../franchise/index.js';
 import { btn, helmet, icon, setVars, teamVars, plural, starRow, teamTag } from './common.js';
 import { newsCard, headlineList, gameLabel, rosterNeeds } from './widgets.js';
+import { saveFailed } from '../../core/storage.js';
 
 /** Advance the week from the hub (bye / played / eliminated). Routes to the offseason when done. */
 export function advanceFromHub(ctx) {
   const { app, save } = ctx;
+  delete save.pendingPostGame;
   let r = F.advanceWeek(save);
   let guard = 0;
   while (r.ok && save.season.phase === 'playoffs' && F.userWeekStatus(save) === 'eliminated' && guard++ < 6) r = F.advanceWeek(save);
@@ -102,10 +104,12 @@ function statusCard(ctx) {
   const text = status === 'bye'
     ? (save.season.phase === 'playoffs' ? 'Top seed perks: you rest while the wild-card round is played.' : 'No game for you this week.')
     : lastResultText(save);
+  const recap = status === 'played' ? F.pendingPostGame(save) : null;
   return h('article.panel.status-card',
     h('h2.panel-title', title),
     h('p', text),
     h('p.dim', 'Advance to play out the rest of the week around the league.'),
+    recap ? btn(app, 'Game recap', () => app.go('postGame', { gameId: recap.gameId, result: recap.result, summary: recap.summary, restored: true }), { kind: 'ghost', block: true, icon: 'standings', id: 'btn-recap' }) : null,
     btn(app, 'Advance week', () => advanceFromHub(ctx), { kind: 'primary', block: true, icon: 'play', sfx: false, id: 'btn-advance' }),
   );
 }
@@ -113,6 +117,7 @@ function statusCard(ctx) {
 function alerts(ctx) {
   const { save } = ctx;
   const out = [];
+  if (saveFailed()) out.push(h('div.alert.warn.static', { role: 'alert' }, icon('cross', 2), h('span', 'Progress is not being saved: browser storage is blocked or full.')));
   const sp = F.roster(save).reduce((s, p) => s + (p.skillPoints || 0), 0);
   if (sp > 0) out.push(h('button.alert', { type: 'button', onclick: () => { ctx.app.sfx('click'); ctx.go('roster'); } }, icon('up', 2), h('span', `${plural(sp, 'skill point')} to spend`), h('span.alert-go', 'Roster')));
   const hurt = F.roster(save).filter((p) => p.injury);

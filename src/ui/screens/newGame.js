@@ -4,7 +4,7 @@ import { h } from '../dom.js';
 import * as F from '../../franchise/index.js';
 import { freshSeed } from '../../core/rng.js';
 import { CONFERENCES, DIVISIONS } from '../../data/teams.js';
-import { btn, helmet, starRow, screenHeader, screenKeys, setVars, teamVars, teamTag } from './common.js';
+import { btn, helmet, starRow, screenHeader, screenKeys, setVars, teamVars, teamTag, rovingRadios } from './common.js';
 
 export const DIFFICULTY_TEXT = {
   easy: 'Soft coverage and forgiving throws. A good place to learn the controls.',
@@ -35,7 +35,14 @@ export class NewGameScreen {
     this.root = h('div.screen.ng');
     root.appendChild(this.root);
     this.offKeys = screenKeys((e) => {
-      if (e.key === 'Escape') { e.preventDefault(); this.app.sfx('back'); this.back(); }
+      if (e.key === 'Escape') { e.preventDefault(); this.app.sfx('back'); this.back(); return; }
+      // Enter with nothing focused moves on (keyboard players never have to hunt for Next)
+      const ae = document.activeElement;
+      if (e.key === 'Enter' && (!ae || ae === document.body || ae === this.root)) {
+        e.preventDefault();
+        this.app.sfx('select');
+        this.next();
+      }
     });
     this.draw();
   }
@@ -104,6 +111,11 @@ export class NewGameScreen {
       const sel = root.querySelector('.team-card.on');
       if (sel) sel.scrollIntoView({ block: 'nearest' });
     }
+    // Keyboard: land on the step's choice (selected club / difficulty) instead of the page body.
+    if (this.step > 0) {
+      const target = root.querySelector('.team-card.on, .diff-opt.on') || root.querySelector('.team-card, .diff-opt');
+      if (target) setTimeout(() => { if (target.isConnected) target.focus({ preventScroll: true }); }, 30);
+    }
   }
 
   /** Select a club in place (keeps the list's scroll position). */
@@ -114,6 +126,7 @@ export class NewGameScreen {
       const on = c.dataset.team === id;
       c.classList.toggle('on', on);
       c.setAttribute('aria-checked', on ? 'true' : 'false');
+      c.setAttribute('tabindex', on ? '0' : '-1');
     }
     setVars(this.root, teamVars(team.colors));
     const pick = this.root.querySelector('.ng-pick');
@@ -182,6 +195,12 @@ export class NewGameScreen {
         })));
       }
     }
+    // All 32 clubs form one Tab stop: arrows move through them, Enter on the picked club = Next.
+    rovingRadios(wrap.querySelectorAll('.team-card'), {
+      isOn: (b) => b.dataset.team === this.teamId,
+      select: (b) => { app.sfx('select'); this.selectTeam(b.dataset.team); b.scrollIntoView({ block: 'nearest' }); },
+      confirm: () => { app.sfx('select'); this.next(); },
+    });
     return wrap;
   }
 
@@ -202,12 +221,18 @@ export class NewGameScreen {
             const sel = b.dataset.diff === m;
             b.classList.toggle('on', sel);
             b.setAttribute('aria-checked', sel ? 'true' : 'false');
+            b.setAttribute('tabindex', sel ? '0' : '-1');
           }
         },
       },
       h('span.diff-name', F.DIFFICULTY.labels[m], m === 'dynamic' ? h('span.chip.ok', 'Default') : null),
       h('span.diff-desc', DIFFICULTY_TEXT[m]));
     }));
+    rovingRadios(list.querySelectorAll('.diff-opt'), {
+      isOn: (b) => b.dataset.diff === this.difficulty,
+      select: (b) => b.click(),
+      confirm: () => this.next(),
+    });
     return h('div.ng-level',
       h('section.panel',
         h('h2.panel-title', 'Difficulty'),

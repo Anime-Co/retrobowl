@@ -436,7 +436,8 @@ export class MatchScreen {
       const pct = Math.round((step.chance || 0) * 100);
       title = 'ONSIDE KICK?';
       sub = `Down ${st.score.opp - st.score.user} with ${fmtClock(st.clock)} left in the 4th.`;
-      options = step.options.map((o) => (o.id === 'onside' ? { ...o, label: `ONSIDE (${pct}%)` } : o));
+      // show the recovery chance once: in the detail line if the logic didn't already put it there
+      options = step.options.map((o) => (o.id === 'onside' && !/%/.test(o.detail || '') ? { ...o, detail: `${pct}% chance to recover` } : o));
     }
     const timeout = step.kind === 'fourth' && m.canCallTimeout()
       ? { left: st.timeouts.user, onCall: () => this.tryTimeout() }
@@ -589,6 +590,8 @@ export class MatchScreen {
     let summary = null;
     try {
       summary = F.applyUserGameResult(this.app.save, r);
+      // keep the recap in the save: a reload before Continue brings the post-game screen back
+      F.setPendingPostGame(this.app.save, summary, r);
       this.app.persist();
     } catch (e) {
       console.warn('applyUserGameResult failed', e);

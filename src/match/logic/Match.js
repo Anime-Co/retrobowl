@@ -14,7 +14,7 @@
 // world losX = ballOn + 10. The opponent frame is 100 − ballOn.
 
 import { Rng } from '../../core/rng.js';
-import { clamp, fmtClock, ordinal } from '../../core/util.js';
+import { clamp, fmtClock, ordinal, yardLabel } from '../../core/util.js';
 import {
   CFG,
   HASH_Y,
@@ -588,7 +588,7 @@ export class Match {
       options.push({ id: 'punt', label: 'PUNT', detail: `Kick it away (~${avg} yd)` });
     }
     if (fgOk) options.push({ id: 'fg', label: 'FIELD GOAL', detail: `${dist}-yard attempt` });
-    options.push({ id: 'go', label: 'GO FOR IT', detail: `${downLabel(st)} at ${spotLabelUser(st.ballOn, this.oppTeam.abbr)}` });
+    options.push({ id: 'go', label: 'GO FOR IT', detail: `${downLabel(st)} at ${yardLabel(st.ballOn)}` });
     return this._present(
       { type: 'decision', kind: 'fourth', options, down: st.down, toGo: st.toGo, ballOn: st.ballOn, fgDistance: dist, fgRange: Math.round(this.fieldGoalRange()) },
       {

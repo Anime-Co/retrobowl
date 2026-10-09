@@ -146,6 +146,8 @@ export function openPlayerCard(app, save, playerId, o = {}) {
             api.rebuild();
           }, { small: true, sfx: false, disabled: !rushCheck || !rushCheck.ok, title: rushCheck && !rushCheck.ok ? rushCheck.message : '-1 week', attrs: { 'data-fk': 'pc-rush' } }),
         ) : null,
+        // Touch screens have no hover titles: say why rush treatment is unavailable.
+        p.injury && rushCheck && !rushCheck.ok ? h('p.dim.small.pc-note', rushCheck.message) : null,
       ));
 
       // Contract

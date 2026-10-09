@@ -193,7 +193,7 @@ test('10-season soak: invariants hold every season', () => {
     prevYear = save.season.year;
     const cap = F.capUsage(save);
     assert.ok(cap.used <= cap.cap, `payroll ${cap.used} over cap ${cap.cap}`);
-    assert.equal(save.salaryCap, 60000 + 1000 * (season + 1));
+    assert.equal(save.salaryCap, F.CAP.base + F.CAP.perSeason * (season + 1));
     assertRosterOk(save);
     assert.ok(F.roster(save).length >= 1);
     deepFinite(save);

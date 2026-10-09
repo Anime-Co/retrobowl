@@ -167,7 +167,7 @@ export class MatchHud {
     const bottom = this.root.querySelector('.mh-bottom').getBoundingClientRect();
     const topEdge = Math.max(bug.bottom, pause.bottom) - host.top;
     return {
-      top: Math.max(46, Math.round(topEdge + 6)),
+      top: Math.max(36, Math.round(topEdge + 6)),
       bottom: Math.max(10, Math.round(host.bottom - bottom.top + 4)),
       left: 8,
       right: 8,

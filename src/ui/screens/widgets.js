@@ -46,7 +46,7 @@ export function statLine(pos, s) {
     case 'QB': return `${n(s.passCmp)}/${n(s.passAtt)} · ${n(s.passYds)} yds · ${n(s.passTd)} TD · ${n(s.int)} INT`;
     case 'RB': return `${n(s.rushAtt)} car · ${n(s.rushYds)} yds · ${n(s.rushTd)} TD · ${n(s.rec)} rec`;
     case 'WR': case 'TE': return `${n(s.rec)} rec · ${n(s.recYds)} yds · ${n(s.recTd)} TD`;
-    case 'K': return `${n(s.fgMade)}/${n(s.fgAtt)} FG · long ${n(s.fgLong)} · ${n(s.patMade)}/${n(s.patAtt)} XP`;
+    case 'K': return `${n(s.fgMade)}/${n(s.fgAtt)} FG · long ${n(s.fgLong)} · ${n(s.patMade)}/${n(s.patAtt)} PAT`;
     case 'OL': return `${n(s.gp)} games`;
     default: return `${n(s.tackles)} tkl · ${n(s.sacks)} sacks · ${n(s.defInt)} INT`;
   }
@@ -59,7 +59,7 @@ export const STAT_ROWS = {
   WR: [['Games', 'gp'], ['Receptions', 'rec'], ['Rec yards', 'recYds'], ['Rec TD', 'recTd'], ['Return yards', 'retYds'], ['Return TD', 'retTd']],
   TE: [['Games', 'gp'], ['Receptions', 'rec'], ['Rec yards', 'recYds'], ['Rec TD', 'recTd']],
   OL: [['Games', 'gp']],
-  K: [['Games', 'gp'], ['FG made', 'fgMade'], ['FG tried', 'fgAtt'], ['Longest FG', 'fgLong'], ['XP made', 'patMade'], ['XP tried', 'patAtt']],
+  K: [['Games', 'gp'], ['FG made', 'fgMade'], ['FG tried', 'fgAtt'], ['Longest FG', 'fgLong'], ['PAT made', 'patMade'], ['PAT tried', 'patAtt']],
   DL: [['Games', 'gp'], ['Tackles', 'tackles'], ['Sacks', 'sacks'], ['Interceptions', 'defInt'], ['Forced fumbles', 'ff']],
 };
 STAT_ROWS.LB = STAT_ROWS.DL;
@@ -137,7 +137,7 @@ const resolvedLines = new Map();
  * @param {{onChange?:Function, compact?:boolean}} [o]
  */
 export function newsCard(app, save, ev, o = {}) {
-  const card = h(`article.panel.news-card${ev.kind === 'message' ? '.msg' : ''}`);
+  const card = h(`article.panel.news-card${ev.kind === 'message' ? '.msg' : ''}`, { tabindex: '-1' });
   const draw = () => {
     while (card.firstChild) card.removeChild(card.firstChild);
     const p = ev.playerId ? F.findPlayer(save, ev.playerId) : null;
@@ -170,6 +170,8 @@ export function newsCard(app, save, ev, o = {}) {
           app.sfx(c.effects.cc ? 'coin' : 'select');
           resolvedLines.set(ev.id, r.effects);
           draw();
+          // the pressed button is gone: keep keyboard focus on the answered card
+          if (!card.contains(document.activeElement)) card.focus({ preventScroll: true });
           if (o.onChange) o.onChange();
         },
       },
@@ -227,6 +229,7 @@ export function attrBars(pos, attrs) {
 
 /** Effects list for post-game deltas. */
 export function deltaChip(label, v, suffix = '') {
+  v = Math.round((Number(v) || 0) * 10) / 10; // never show float noise like -2.4000000000000057
   const cls = v > 0 ? 'good' : v < 0 ? 'bad' : 'dim';
   return h('span.delta', h('span.label', label), h(`b.${cls}`, `${signed(v)}${suffix}`));
 }

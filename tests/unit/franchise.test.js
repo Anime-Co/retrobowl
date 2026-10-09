@@ -379,10 +379,12 @@ test('players: stars, generation targets, salary formula, labels', () => {
   assert.equal(F.stars(p), 0.5);
   for (const k of F.ATTRS.QB) p.attrs[k] = 6;
   p.morale = 60;
-  // 0.3 + 0.9 * 3^1.6 = 5.51 -> $5.5M at peak age
-  assert.equal(F.askingSalary(p), 5500);
+  // base + mult * 3^exp (0.3 + 1.0 * 3^1.6 = 6.1 -> $6.1M) at peak age, from the tuning config
+  const S = F.CONFIG.SALARY;
+  const ask3 = Math.round((S.base + S.mult * 3 ** S.exp) / S.roundTo) * S.roundTo;
+  assert.equal(F.askingSalary(p), ask3);
   p.morale = 10;
-  assert.ok(F.askingSalary(p) > 5500);
+  assert.ok(F.askingSalary(p) > ask3);
   assert.equal(F.rookieSalary(0.5), 500);
   assert.equal(F.rookieSalary(5), 1500);
   assert.equal(F.shortName({ first: 'Jordan', last: 'Smith' }), 'J. SMITH');
@@ -438,8 +440,9 @@ test('applyUserGameResult: summary shape, CC, injuries from hits, records', () =
     log: [],
   });
   assert.equal(sum.won, true);
-  assert.equal(sum.ccEarned, 1 + 2 + 1);
-  assert.equal(save.cc >= ccBefore + 4 - 1, true);
+  const ccWin = F.CC.perGame + F.CC.win + F.CC.bigWin; // 35-10: a win by 21+
+  assert.equal(sum.ccEarned, ccWin);
+  assert.equal(save.cc >= ccBefore + ccWin - 1, true);
   assert.ok(sum.injuries.some((i) => i.playerId === rb.id), 'heavy hits injure');
   assert.ok(rb.injury && rb.injury.weeks >= 1);
   assert.ok(sum.injuries.every((i) => i.playerId === rb.id), 'only hit players can be injured');
@@ -493,10 +496,11 @@ function assertNoUndefined(v, path = 'x') {
 test('economy: facilities, release dead money, contracts, coordinators, boosts', () => {
   const save = fresh(91);
   save.cc = 50;
-  assert.equal(F.facilityUpgradeCost(save, 'training'), 4);
+  const cost2 = F.FACILITIES.upgradeCost[2];
+  assert.equal(F.facilityUpgradeCost(save, 'training'), cost2);
   assert.ok(F.upgradeFacility(save, 'training').ok);
   assert.equal(save.facilities.training, 2);
-  assert.equal(save.cc, 46);
+  assert.equal(save.cc, 50 - cost2);
   assert.ok(F.trainingXpMult(save) > 1.14);
   save.facilities.stadium = 5;
   assert.equal(F.upgradeFacility(save, 'stadium').reason, 'maxed');

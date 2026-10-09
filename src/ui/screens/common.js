@@ -211,8 +211,11 @@ export function teamTag(team, { size = 'sm' } = {}) {
 
 // ------------------------------------------------------------------------------------ format
 
-/** $K -> "$3.2M" */
-export const money = (k) => `$${(Math.round(k / 100) / 10).toFixed(1)}M`;
+/** $K -> "$3.2M" (negative: "-$1.5M", never "$-1.5M") */
+export const money = (k) => {
+  const v = Math.round((Number(k) || 0) / 100) / 10;
+  return `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(1)}M`;
+};
 export const signed = (v) => (v > 0 ? `+${v}` : `${v}`);
 export const plural = (n, word, pl = `${word}s`) => `${n} ${n === 1 ? word : pl}`;
 
@@ -272,6 +275,40 @@ export function segmented(o) {
   });
   buttons.forEach((b) => group.appendChild(b));
   return group;
+}
+
+/**
+ * Roving-tabindex keyboard model for radio-like buttons: the set is one Tab stop (the selected
+ * button), arrow keys / Home / End move and select, Enter on the selected button confirms.
+ * @param {HTMLElement[]} items
+ * @param {{isOn:(b:HTMLElement)=>boolean, select:(b:HTMLElement)=>void, confirm?:(b:HTMLElement)=>void}} o
+ * @returns {{sync:()=>void}} call sync() after the selection changes by other means (clicks)
+ */
+export function rovingRadios(items, o) {
+  const list = [...items];
+  const sync = () => {
+    const cur = list.findIndex((b) => o.isOn(b));
+    list.forEach((b, i) => b.setAttribute('tabindex', i === (cur >= 0 ? cur : 0) ? '0' : '-1'));
+  };
+  list.forEach((b, i) => b.addEventListener('keydown', (e) => {
+    let j = -1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') j = (i + 1) % list.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') j = (i - 1 + list.length) % list.length;
+    else if (e.key === 'Home') j = 0;
+    else if (e.key === 'End') j = list.length - 1;
+    else if (e.key === 'Enter' && o.confirm && o.isOn(b)) {
+      e.preventDefault();
+      o.confirm(b);
+      return;
+    }
+    if (j < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    o.select(list[j]);
+    sync();
+    list[j].focus();
+  }));
+  sync();
+  return { sync };
 }
 
 /** On/off switch (role=switch). */
@@ -444,10 +481,33 @@ export function screenHeader(app, { title, onBack, right, backLabel = 'Back' }) 
   );
 }
 
+const focusSig = (el) => (el.id ? `#${el.id}` : el.dataset && el.dataset.fk ? `fk:${el.dataset.fk}`
+  : el.getAttribute('aria-label') ? `al:${el.getAttribute('aria-label')}` : `tx:${(el.textContent || '').trim().slice(0, 48)}`);
+
+/**
+ * Remember which control inside `root` has focus, so a full redraw can put it back
+ * (keyboard players keep their place; Enter never falls through to a screen's default action).
+ * @returns {null | (() => void)} call after the redraw to restore focus
+ */
+export function keepFocus(root) {
+  const ae = document.activeElement;
+  if (!root || !ae || ae === document.body || !root.contains(ae)) return null;
+  const sig = focusSig(ae);
+  const tag = ae.tagName;
+  const index = [...root.querySelectorAll(tag)].filter((x) => focusSig(x) === sig).indexOf(ae);
+  return (fallback) => {
+    const same = [...root.querySelectorAll(tag)].filter((x) => focusSig(x) === sig);
+    const el = same[index] || same[same.length - 1] || fallback;
+    if (el && el.focus) el.focus({ preventScroll: true });
+  };
+}
+
 /** Install a keydown handler that ignores events while a sheet is open; returns remover. */
 export function screenKeys(handler) {
   const fn = (e) => {
-    if (sheetOpen()) return;
+    // An event another handler already acted on (e.g. Enter that just started a career) must not
+    // also trigger the next screen's shortcut when that screen mounts mid-dispatch.
+    if (sheetOpen() || e.defaultPrevented) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) && e.key !== 'Escape') return;
     handler(e);
