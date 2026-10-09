@@ -16,6 +16,9 @@
 //             screen's short side, instead of the width-based default
 //   ppyMax    if set, caps pixels-per-yard (e.g. to fit a whole field goal on screen)
 //   marginX / marginY  how far (yards) the view may show beyond the end lines / sidelines
+//   marginY0 / marginY1  optional per-side overrides of marginY for the y = 0 / y = FIELD_W
+//             sideline (e.g. extra room on the side a HUD bar covers)
+//   marginX0 / marginX1  likewise for the x = 0 / x = FIELD_LEN end line
 
 import { damp } from '../core/util.js';
 
@@ -46,6 +49,10 @@ export class Camera {
     this.ppyMax = 0;
     this.marginX = 3;
     this.marginY = 3;
+    this.marginY0 = null;
+    this.marginY1 = null;
+    this.marginX0 = null;
+    this.marginX1 = null;
   }
 
   /** Update viewport size; picks pixels-per-yard so the view covers sensible field area. */
@@ -113,12 +120,14 @@ export class Camera {
   _clampTarget() {
     const hx = this.spanX / 2;
     const hy = this.spanY / 2;
-    const mx = this.marginX;
-    const my = this.marginY;
-    if (this.spanX >= FIELD_LEN + 2 * mx) this.tx = FIELD_LEN / 2;
-    else this.tx = Math.min(Math.max(this.tx, -mx + hx), FIELD_LEN + mx - hx);
-    if (this.spanY >= FIELD_W + 2 * my) this.ty = FIELD_W / 2;
-    else this.ty = Math.min(Math.max(this.ty, -my + hy), FIELD_W + my - hy);
+    const mx0 = this.marginX0 ?? this.marginX;
+    const mx1 = this.marginX1 ?? this.marginX;
+    const my0 = this.marginY0 ?? this.marginY;
+    const my1 = this.marginY1 ?? this.marginY;
+    if (this.spanX >= FIELD_LEN + mx0 + mx1) this.tx = (FIELD_LEN + mx1 - mx0) / 2;
+    else this.tx = Math.min(Math.max(this.tx, -mx0 + hx), FIELD_LEN + mx1 - hx);
+    if (this.spanY >= FIELD_W + my0 + my1) this.ty = (FIELD_W + my1 - my0) / 2;
+    else this.ty = Math.min(Math.max(this.ty, -my0 + hy), FIELD_W + my1 - hy);
   }
 
   shake(mag = 2, time = 0.25) {

@@ -13,8 +13,12 @@
 //   carrier    flick sideways ..................... sideStep(world dir)
 //              flick forward / backward ........... dive() / stutter()  (stutter in own EZ on a
 //                                                   kick return = touchback)
-//              press & hold still ................. truck(true) until lift
-//   kicks      tap / click / Space / Enter ........ kickTap()  (fires on press for timing)
+//              press & hold still ................. truck(true) until lift (the hold counts from
+//                                                   when the runner has the ball)
+//              a 2nd thumb landing ................ takes over the gesture (two-thumb play: the
+//                                                   resting thumb no longer swallows the swipe)
+//   kicks      tap / click / Space / Enter ........ kickTap()  (fires on press for timing; a tap
+//                                                   with the other thumb counts too)
 //   after the whistle: tap / click / Space / Enter skips the post-play beat.
 // Keyboard: H/Enter handoff, Space drop back | kick tap | hold = truck, R tuck, B bullet,
 // arrows/WASD by SCREEN direction (lateral = juke, holding drifts; forward = dive; back = stutter).
@@ -24,10 +28,11 @@
 /** Feel tuning (CSS px / ms / s). */
 export const CONTROL = {
   dragStartPx: 9, // press -> drag (pre-snap drop back) after moving this far
+  rbDragStartPx: 20, // ... when the press landed on the RB (a sloppy tap must not become a drop back)
   dropBackFwd: 0.35, // a pre-snap drag snaps unless its forward share exceeds this (clearly forward)
   rbHitPx: 30, // generous radius around the RB sprite box that counts as "tap the RB"
   tapMaxMs: 600,
-  tapMaxPx: 14,
+  tapMaxPx: 20, // finger travel still accepted as a tap on the RB
   aimComfortFrac: 0.42, // longest comfortable drag = frac * short side (CSS px) -> max arm distance
   aimComfortMin: 130,
   aimComfortMax: 300,
@@ -41,7 +46,7 @@ export const CONTROL = {
   lateralBias: 0.7, // |lateral| >= bias * |forward| -> side-step (dive / stutter need a clear line)
   sameDirMs: 450, // a second move in the same direction within one touch needs this much time
   zigzagMs: 90, // a direction reversal within one touch may fire again after this
-  holdMs: 180, // press-and-hold without moving -> truck
+  holdMs: 260, // press-and-hold without moving -> truck (shorter reads a resting thumb as a truck)
   holdMovePx: 10,
   meshBufferS: 0.8, // carrier moves made during the handoff mesh (<= 0.75 s) land when the RB gets the ball
   keyDriftMs: 200, // holding a lateral key longer than this drifts
@@ -55,7 +60,7 @@ const KEY_VEC = {
   ArrowRight: [1, 0], KeyD: [1, 0],
 };
 
-const HIST = 24;
+const HIST = 48; // swipe history samples (covers the swipe window even at 120-160 Hz touch rates)
 
 export class Controller {
   /** @param {import('./PlayView.js').PlayView} view */
@@ -128,6 +133,28 @@ export class Controller {
     return dx * F.x + dy * F.y;
   }
 
+  /**
+   * The screen rotated (or the drive flipped) under a held finger: its drag no longer means what
+   * it did - drop it instead of throwing / juking somewhere unintended on lift.
+   */
+  _checkOrient() {
+    const g = this.g;
+    if (!g || g.orient === this._orientKey()) return;
+    const sim = this.sim;
+    if (g.mode === 'aim' && sim.phase === 'dropback') {
+      sim.aimCancel();
+      this._note('aimCancel');
+    }
+    if (g.truck) sim.truck(false);
+    this.g = null;
+  }
+
+  /** Screen orientation + mirror the current gesture was made in. */
+  _orientKey() {
+    const cam = this.view.camera;
+    return cam.orientation === 'landscape' ? (cam.mirror ? 'L-' : 'L+') : 'P';
+  }
+
   _carryPhase() {
     const sim = this.sim;
     return sim.phase === 'carry' || sim.phase === 'return';
@@ -145,14 +172,17 @@ export class Controller {
 
   /** @param {any[]} events from Input.poll() */
   handle(events) {
+    this._checkOrient();
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
       switch (ev.type) {
         case 'down': this._down(ev); break;
-        case 'move': this._move(ev); break;
-        case 'up': this._up(ev); break;
-        case 'cancel': this._cancel(); break;
-        case 'pointer2': this._pointer2(); break;
+        case 'move': if (!this.g || !this.g.sec) this._move(ev); break;
+        case 'up': if (!this.g || !this.g.sec) this._up(ev); break;
+        case 'cancel': if (!this.g || !this.g.sec) this._cancel(); break;
+        case 'pointer2': this._pointer2(ev); break;
+        case 'move2': if (this.g && this.g.sec && this.g.id === ev.id) this._move(ev); break;
+        case 'up2': if (this.g && this.g.sec && this.g.id === ev.id) (ev.cancel ? this._cancel() : this._up(ev)); break;
         case 'key': this._key(ev); break;
         default: break;
       }
@@ -176,6 +206,19 @@ export class Controller {
         this.drifting = 0;
       }
       this.lastPhase = sim.phase;
+    }
+    this._checkOrient();
+    if (sim.carrier !== this._carrier) {
+      // the runner just got the ball (handoff, catch, kick return): a finger already resting on the
+      // glass starts its press-and-hold count now, so it doesn't truck the instant he has it
+      this._carrier = sim.carrier;
+      const g0 = this.g;
+      if (g0 && g0.mode === 'carry' && !g0.truck) {
+        g0.t0 = now;
+        g0.x0 = g0.x;
+        g0.y0 = g0.y;
+        g0.maxMove = 0;
+      }
     }
     const g = this.g;
     if (g && g.mode === 'aim' && g.aimed && !g.run && sim.phase === 'dropback') this._applyAim(g);
@@ -211,6 +254,11 @@ export class Controller {
   // ------------------------------------------------------------------ pointer
 
   _down(ev) {
+    this._begin(ev, false);
+  }
+
+  /** Start a gesture for a pointer (`sec` = a secondary touch taking over from a resting thumb). */
+  _begin(ev, sec) {
     const sim = this.sim;
     const v = this.view;
     if (sim.phase === 'dead') {
@@ -218,7 +266,8 @@ export class Controller {
       return;
     }
     const g = {
-      x0: ev.x, y0: ev.y, x: ev.x, y: ev.y, t0: ev.t, mode: 'none', onRB: false, maxMove: 0,
+      x0: ev.x, y0: ev.y, x: ev.x, y: ev.y, t0: ev.t, mode: 'none', onRB: false, maxMove: 0, id: ev.id, sec,
+      orient: this._orientKey(),
       aimed: false, run: false, truck: false, fired: false, lastKind: '', lastDir: 0, firedT: 0, anchorT: ev.t,
     };
     this.hn = 0;
@@ -257,7 +306,7 @@ export class Controller {
     const sim = this.sim;
     switch (g.mode) {
       case 'pending':
-        if (d >= CONTROL.dragStartPx) {
+        if (d >= (g.onRB ? CONTROL.rbDragStartPx : CONTROL.dragStartPx)) {
           const fwd = this.fwdOf(ev.x - g.x0, ev.y - g.y0);
           if (fwd <= CONTROL.dropBackFwd * d && sim.dropBack()) {
             this._note('dropBack');
@@ -332,13 +381,34 @@ export class Controller {
     if (g.truck) sim.truck(false);
   }
 
-  _pointer2() {
+  /** A second touch (or the right mouse button) while the primary pointer is held. */
+  _pointer2(ev) {
     const sim = this.sim;
     if (sim.phase === 'dropback') {
       sim.toggleBullet();
       this._note('bullet');
       this.view.noteBullet();
+      return;
     }
+    if (sim.kind === 'fg' || sim.kind === 'pat') {
+      // tapping power with one thumb and aim with the other (first thumb still down)
+      if (sim.phase !== 'dead') this._kickTap();
+      else this.view.trySkip();
+      return;
+    }
+    if (sim.phase === 'dead') {
+      this.view.trySkip();
+      return;
+    }
+    // ball carrier / returner / ball in the air: the new thumb takes over the gesture
+    if (sim.phase === 'presnap' || !ev || ev.id == null || ev.button > 0) return;
+    const g = this.g;
+    if (g && g.truck) {
+      sim.truck(false);
+      this._note('truckOff');
+    }
+    this.g = null;
+    this._begin(ev, true);
   }
 
   _toCarry(g, now) {
@@ -404,17 +474,19 @@ export class Controller {
   // ------------------------------------------------------------------ carrier swipes
 
   _swipe(g, t, atRelease) {
-    // displacement over the recent window (but only since the last fired move)
+    // displacement over the recent window (but only since the last fired move). The origin is
+    // where the finger was AT the window start: the last sample at or before it (a finger resting
+    // at the turn of a zigzag sends no moves, so the turn point may be older than the window)
     const since = Math.max(g.anchorT, t - CONTROL.swipeWindowMs);
     let ox = g.x;
     let oy = g.y;
     let ot = t;
     for (let i = 0; i < this.hn; i++) {
       const j = (this.hi - i + HIST) % HIST;
-      if (this.ht[j] < since) break;
       ox = this.hx[j];
       oy = this.hy[j];
       ot = this.ht[j];
+      if (this.ht[j] <= since) break;
     }
     const dx = g.x - ox;
     const dy = g.y - oy;

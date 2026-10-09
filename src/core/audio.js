@@ -26,7 +26,21 @@ export class Audio {
       this.ctx = new AC();
       this.master = this.ctx.createGain();
       this.master.gain.value = 0.5;
-      this.master.connect(this.ctx.destination);
+      // a gentle limiter: a tackle, the whistle, the first-down jingle and the crowd swell often
+      // land on the same frame and would otherwise clip
+      let out = this.ctx.destination;
+      try {
+        const lim = this.ctx.createDynamicsCompressor();
+        lim.threshold.value = -12;
+        lim.knee.value = 6;
+        lim.ratio.value = 12;
+        lim.attack.value = 0.003;
+        lim.release.value = 0.12;
+        lim.connect(out);
+        out = lim;
+        this.limiter = lim;
+      } catch { /* old WebAudio: no limiter */ }
+      this.master.connect(out);
     } catch {
       this.ctx = null;
     }

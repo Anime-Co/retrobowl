@@ -70,6 +70,52 @@ function colorDist(a, b) {
   return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
 
+/** Perceptual-ish colour distance ("redmean" weighted RGB), ~0..765. */
+export function kitDistance(a, b) {
+  const x = hexToRgb(a);
+  const y = hexToRgb(b);
+  const rm = (x[0] + y[0]) / 2;
+  const dr = x[0] - y[0];
+  const dg = x[1] - y[1];
+  const db = x[2] - y[2];
+  return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+}
+
+/** Kit readability thresholds (kitDistance units). */
+export const KIT = { turf: 115, clash: 140, alt: '#f4f1e8', altDark: '#1c1f2a' };
+
+/**
+ * On-field kit for a team look. A jersey or helmet that would melt into the turf switches to the
+ * team's secondary colour (or an off-white alternate), keeping the primary as the trim; with
+ * `other` (the opponent's resolved kit) the jersey also switches when both sides look alike.
+ * The end zones / banners keep the real team colours; only player sprites use the kit.
+ * @param {import('../types.js').TeamLook} look
+ * @param {string[]} turf turf colours to keep clear of
+ * @param {import('../types.js').TeamLook|null} [other]
+ */
+export function fieldKit(look, turf, other = null) {
+  const L = { ...look };
+  const primary = L.primary || '#3355aa';
+  const secondary = L.secondary || '#ffffff';
+  const near = (c, list, th) => list.some((t) => t && kitDistance(c, t) < th);
+  const turfs = turf || [];
+  const pick = (cands, avoid, th) => cands.find((c) => c && !near(c, turfs, KIT.turf) && !near(c, avoid, th));
+  let jersey = primary;
+  const clash = other && other.primary && kitDistance(primary, other.primary) < KIT.clash;
+  if (near(primary, turfs, KIT.turf) || clash) {
+    const avoid = other && other.primary ? [other.primary] : [];
+    jersey = pick([secondary, KIT.alt, KIT.altDark], avoid, KIT.clash) || primary;
+  }
+  if (jersey !== primary) {
+    L.primary = jersey;
+    // the real primary becomes the trim (stripe / numbers) when it still reads on the new jersey
+    L.secondary = kitDistance(primary, jersey) > 120 ? primary : secondary;
+  }
+  const helmet = L.helmet || primary;
+  if (near(helmet, turfs, KIT.turf)) L.helmet = pick([secondary, jersey, KIT.alt], [], 0) || helmet;
+  return L;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Palette indices
 
@@ -998,7 +1044,24 @@ export function drawBall(ctx, sx, sy, z = 0, opts = {}) {
   const size = zz > 3.5 ? 'big' : 'normal';
   const spin = opts.spinning === false ? 0 : Math.floor((opts.spin || 0) * 14) % 3;
   const c = ballCanvas(orient, size, spin);
-  ctx.drawImage(c, Math.round(sx - c.width / 2), Math.round(sy - zz * ppy - c.height / 2 - 1));
+  // dx / dy: screen offset of the ball (not its shadow), e.g. a lob's sideways lean in portrait
+  ctx.drawImage(c, Math.round(sx + (opts.dx || 0) - c.width / 2), Math.round(sy + (opts.dy || 0) - zz * ppy - c.height / 2 - 1));
+}
+
+/**
+ * Build every sprite frame (all skins, facings, animations) for a team look now, so the first
+ * live play doesn't colourise sprites mid-action. Cheap once cached (~30-45 ms cold per look).
+ * @param {TeamLook} look
+ */
+export function prewarmSprites(look) {
+  if (!look) return;
+  for (let skin = 0; skin < SKIN_TONES.length; skin++) {
+    for (const facing of FACINGS) {
+      for (const anim of Object.keys(ANIMS)) {
+        for (let f = 0; f < ANIMS[anim].frames; f++) fastSprite(look, facing, anim, f, skin);
+      }
+    }
+  }
 }
 
 /** Drop every cached sprite canvas (e.g. after team colours change or a context loss). */

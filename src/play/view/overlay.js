@@ -40,7 +40,9 @@ export function pixLine(ctx, x0, y0, x1, y1, t = 1) {
  *   n: number of points to use (default all); upto: fraction (0..1) of the last segment budget;
  *   color, gap (px), size (px), dash (px "on" length: draws dashes instead of dots),
  *   phase (px offset, for marching dots), ground (force z = 0), shadow (dark 1px drop shadow),
- *   fadeTail (px over which the last dots fade), alpha, maxPx (stop after this many px: grow-in)
+ *   fadeTail (px over which the last dots fade), alpha, maxPx (stop after this many px: grow-in),
+ *   lean ({x, y}: extra screen px per yard of height above the straight chord between the first
+ *   and last point - shows a lob's height when the throw runs along the screen's vertical axis)
  * @returns {number} screen length walked (px)
  */
 export function dotPath(ctx, cam, pts, o) {
@@ -50,24 +52,37 @@ export function dotPath(ctx, cam, pts, o) {
   const size = o.size || 2;
   const dash = o.dash || 0;
   const ground = !!o.ground;
+  const lean = !ground && o.lean && (o.lean.x || o.lean.y) ? o.lean : null;
+  const last = pts.length - 1;
+  const z0 = pts[0].z || 0;
+  const z1 = pts[last].z || 0;
+  const proj = (i, out) => {
+    const p = pts[i];
+    cam.project(p.x, p.y, ground ? 0 : p.z || 0, out);
+    if (lean) {
+      const hgt = (p.z || 0) - (z0 + ((z1 - z0) * i) / last);
+      if (hgt > 0) { out.x += lean.x * hgt; out.y += lean.y * hgt; }
+    }
+    return out;
+  };
   const prevAlpha = ctx.globalAlpha;
   const baseAlpha = prevAlpha * (o.alpha ?? 1);
   // total length (for the fading tail)
   let total = 0;
   if (o.fadeTail) {
-    cam.project(pts[0].x, pts[0].y, ground ? 0 : pts[0].z || 0, A);
+    proj(0, A);
     for (let i = 1; i < n; i++) {
-      cam.project(pts[i].x, pts[i].y, ground ? 0 : pts[i].z || 0, B);
+      proj(i, B);
       total += Math.hypot(B.x - A.x, B.y - A.y);
       A.x = B.x; A.y = B.y;
     }
   }
   let walked = 0;
   let next = ((o.phase || 0) % gap + gap) % gap;
-  cam.project(pts[0].x, pts[0].y, ground ? 0 : pts[0].z || 0, A);
+  proj(0, A);
   const h = Math.floor(size / 2);
   for (let i = 1; i < n; i++) {
-    cam.project(pts[i].x, pts[i].y, ground ? 0 : pts[i].z || 0, B);
+    proj(i, B);
     const sx = B.x - A.x;
     const sy = B.y - A.y;
     const len = Math.hypot(sx, sy);
@@ -274,18 +289,22 @@ export function banner(ctx, vw, y, text, o) {
   return bandH;
 }
 
-/** Multi-line tip box centred at (cx, bottom y). Returns its height. */
-export function tipBox(ctx, cx, bottom, text, alpha, maxW) {
+/** Size of a tip box ({w, h} px incl. padding, font size) for `text` within `maxW`. */
+export function tipSize(text, maxW) {
   const lines = text.split('\n');
-  let scale = 1;
   let w = 0;
   for (const ln of lines) w = Math.max(w, measureText(ln, { size: 'big' }));
   const useSmall = w + 12 > maxW;
   const size = useSmall ? 'small' : 'big';
   const lh = useSmall ? 7 : 10;
   w = 0;
-  for (const ln of lines) w = Math.max(w, measureText(ln, { size, scale }));
-  const h = lines.length * lh + 6;
+  for (const ln of lines) w = Math.max(w, measureText(ln, { size }));
+  return { w: w + 12, h: lines.length * lh + 6, size, lh, tw: w, lines };
+}
+
+/** Multi-line tip box centred at (cx, bottom y). Returns its height. */
+export function tipBox(ctx, cx, bottom, text, alpha, maxW) {
+  const { h, size, lh, tw: w, lines } = tipSize(text, maxW);
   const x = Math.round(cx - w / 2 - 6);
   const y = Math.round(bottom - h);
   const a = ctx.globalAlpha;

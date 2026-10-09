@@ -139,7 +139,10 @@ export function kickTap(sim) {
   if (sim.phase === 'presnap' && k.stage === 'power') {
     k.powerLocked = true;
     k.stage = 'aim';
-    k.aimClock = 0;
+    // the arrow starts at one edge and swings in toward the centre (a reflexive double tap must
+    // not lock a centred kick); the side is fixed per kick (seed parity: no rng draw)
+    k.aimClock = k.sweepPeriod * (((sim.setup.seed >>> 0) & 1) ? 0.75 : 0.25);
+    k.aim = triSigned(k.aimClock / k.sweepPeriod);
     sim._snapKick();
     return true;
   }

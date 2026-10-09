@@ -15,7 +15,7 @@ import { darken, lighten, luma, SKIN_TONES } from './sprites.js';
 
 const PAD = 8; // yards of surroundings pre-rendered beyond each sideline
 const PAD_X = 13; // ... and beyond each end line (portrait kicks look past the uprights)
-const CACHE_SIZE = 2; // pre-renders kept (e.g. normal zoom + a wider field-goal framing)
+const CACHE_SIZE = 3; // pre-renders kept (normal zoom + the wider field-goal framing + one spare)
 const BORDER = 0.35; // white boundary band (yards)
 const APRON = 0.65; // sideline/end-line apron between the border and the wall
 const WALL = 0.45; // padded wall
@@ -205,30 +205,66 @@ export class FieldRenderer {
     this._cache.clear();
   }
 
-  _ensure(camera) {
-    const mirror = !!camera.mirror;
-    const key = `${camera.orientation}|${mirror}|${camera.ppy}|${camera.yScale}|${lookKey(this.home)}|${lookKey(this.away)}`;
-    if (key === this._key && this._static) return;
+  _keyFor(camera) {
+    return `${camera.orientation}|${!!camera.mirror}|${camera.ppy}|${camera.yScale}|${lookKey(this.home)}|${lookKey(this.away)}`;
+  }
+
+  /** Cache entry for a framing (built on a miss; LRU order refreshed). */
+  _entry(camera, key = this._keyFor(camera)) {
     let e = this._cache.get(key);
     if (e) {
       this._cache.delete(key); // refresh LRU order
     } else {
       const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-      const m = new Mapper(camera.orientation, camera.ppy, camera.yScale, mirror);
+      const m = new Mapper(camera.orientation, camera.ppy, camera.yScale, !!camera.mirror);
       e = { map: m, static: this._buildStatic(m), crowd: this._buildCrowd(m) };
       this.buildMs = (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
       while (this._cache.size >= CACHE_SIZE) this._cache.delete(this._cache.keys().next().value);
     }
     this._cache.set(key, e);
+    return e;
+  }
+
+  _ensure(camera) {
+    const key = this._keyFor(camera);
+    if (key === this._key && this._static) return;
+    const e = this._entry(camera, key);
     this._map = e.map;
     this._static = e.static;
     this._crowd = e.crowd;
     this._key = key;
   }
 
-  /** Pre-render now for a camera (e.g. while a menu is up) so the first frame doesn't stall. */
-  prepare(camera) {
+  /**
+   * Pre-render now for a camera (e.g. while a play is still pre-snap) so no frame stalls later.
+   * `crowd` also builds every crowd bob frame (otherwise they are built the first time each is
+   * shown, i.e. mid-play).
+   */
+  prepare(camera, { crowd = true } = {}) {
     this._ensure(camera);
+    if (crowd) this._fillCrowd(this._crowd);
+  }
+
+  /**
+   * Build (and cache) another framing without switching to it, e.g. the wider field-goal zoom
+   * while the field is idle. `cam` = {orientation, mirror, ppy, yScale}. Returns true if it built.
+   */
+  prewarm(cam) {
+    const key = this._keyFor(cam);
+    if (key === this._key || this._cache.has(key)) return false;
+    const cur = this._key && this._cache.get(this._key);
+    const e = this._entry(cam, key);
+    this._fillCrowd(e.crowd);
+    if (cur) {
+      // keep the framing in use the most recently used one
+      this._cache.delete(this._key);
+      this._cache.set(this._key, cur);
+    }
+    return true;
+  }
+
+  _fillCrowd(crowd) {
+    for (const s of crowd || []) for (let f = 0; f < s.frames.length; f++) if (!s.frames[f]) s.frames[f] = s.make(f);
   }
 
   // -------------------------------------------------------------------------------------------

@@ -12,14 +12,14 @@
 
 import { PlaySim } from '../sim/PlaySim.js';
 import { Camera, FIELD_W } from '../../render/camera.js';
-import { FieldRenderer } from '../../render/field.js';
-import { drawPlayer, drawBall, drawRing } from '../../render/sprites.js';
+import { FieldRenderer, FIELD_COLORS } from '../../render/field.js';
+import { drawPlayer, drawBall, drawRing, fieldKit, prewarmSprites } from '../../render/sprites.js';
 import { measureText } from '../../render/font.js';
 import { Fx } from '../../render/fx.js';
 import { readJSON, writeJSON } from '../../core/storage.js';
 import { Controller } from './controller.js';
 import {
-  INK, dotPath, pathArrow, blockMarker, landingMarker, vMeter, hMeter, windIcon, banner, tipBox, tagAbove, pixLine,
+  INK, dotPath, pathArrow, blockMarker, landingMarker, vMeter, hMeter, windIcon, banner, tipBox, tipSize, tagAbove, pixLine,
   arrowHead,
 } from './overlay.js';
 
@@ -32,8 +32,13 @@ export const VIEW = {
   farMult: 0.78, // ppy multiplier for the Far camera
   presnapBack: { landscape: 13, portrait: 21 }, // yards visible behind the LOS before the snap
   carryLead: 0.36, // the ball carrier sits this far (fraction of the view) from the back edge
-  dropbackLead: 0.24,
+  dropbackLead: { landscape: 0.24, portrait: 0.15 }, // portrait's long view needs less room behind the QB
   kickLead: 0.2,
+  kickSpotMin: 54, // farthest FG spot (66 yd): the one wider field-goal framing fits it (pre-rendered)
+  crossMargin: 2.5, // yd kept between framed players / the aim target and the screen (HUD) edge
+  arcLean: 0.6, // screen px per px of lob height leaned sideways when a throw runs up/down the screen
+  leanFlip: 0.15, // |screen dx| of the throw direction that flips the lean side (hysteresis)
+  buzzGapMs: 110, // min gap between small haptic pulses (big hits / scores always buzz)
   beat: 1.4, // post-play beat (s) before view.done
   beatBig: 1.9, // ... after a TD / turnover / made kick
   routeFade: 1.0, // s after the snap over which the pre-snap route lines fade
@@ -50,6 +55,35 @@ export const VIEW = {
 const DEFAULT_USER = { abbr: 'YOU', city: 'Home', primary: '#1952b8', secondary: '#fdd835', helmet: '#1952b8' };
 const DEFAULT_OPP = { abbr: 'OPP', city: 'Away', primary: '#c62828', secondary: '#f0f0f0', helmet: '#c62828' };
 const TIPS_KEY = 'playTips';
+const TURF = [FIELD_COLORS.turfA, FIELD_COLORS.turfB];
+
+// HUD insets of the most recent play view (MatchScreen passes one live object), so idle views
+// (drives, decisions) pre-warm the same field-goal framing the next kick will use
+let lastPlayInsets = null;
+
+// one MediaQueryList for "is this a touch device?" (matchMedia() per frame forces style work)
+let coarseMq;
+function coarsePointer() {
+  try {
+    if (coarseMq === undefined) coarseMq = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null;
+    return !!(coarseMq && coarseMq.matches);
+  } catch {
+    return false;
+  }
+}
+
+// on-field kits, memoised so consecutive plays share one look object (and its sprite cache)
+const kitCache = new Map();
+function kitFor(look, other) {
+  const key = `${look.primary}|${look.secondary}|${look.helmet}|${other ? other.primary : ''}`;
+  let k = kitCache.get(key);
+  if (!k) {
+    k = fieldKit(look, TURF, other);
+    if (kitCache.size > 64) kitCache.clear();
+    kitCache.set(key, k);
+  }
+  return k;
+}
 
 // one pre-rendered field per app (so consecutive plays don't rebuild it)
 const fieldCache = new WeakMap();
@@ -77,6 +111,9 @@ class FieldScene {
     this.opts = o;
     this.userLook = { ...DEFAULT_USER, ...(o.userLook || {}) };
     this.oppLook = { ...DEFAULT_OPP, ...(o.oppLook || {}) };
+    // player sprites wear on-field kits: no jersey that melts into the turf, no two look-alike sides
+    this.userKit = kitFor(this.userLook, null);
+    this.oppKit = kitFor(this.oppLook, this.userKit);
     this.driveLeft = !!o.driveLeft;
     this.camera = new Camera();
     this.field = sharedField(app);
@@ -99,14 +136,18 @@ class FieldScene {
     cam.zoom = zoom === 'far' ? VIEW.farMult : 1;
     const cap = this._ppyCap(d);
     if (cam.viewW !== d.w || cam.viewH !== d.h || cam.orientation !== d.orientation || cam._z !== cam.zoom || cam._cap !== cap) {
+      const rebuilt = cam.viewW !== d.w || cam.viewH !== d.h || cam.orientation !== d.orientation;
       cam.ppyMax = 0;
       cam.setViewport(d.w, d.h, d.orientation);
+      this._normalPpy = cam.ppy;
       if (cap > 0 && cap < cam.ppy) {
-        cam.ppyMax = Math.max(cap, Math.ceil(cam.ppy * 0.7)); // never below 70% of the normal framing
+        // one wider framing for every kick that doesn't fit (so it can be pre-rendered)
+        cam.ppyMax = this._kickPpy(d, cam.ppy);
         cam.setViewport(d.w, d.h, d.orientation);
       }
       cam._z = cam.zoom;
       cam._cap = cap;
+      if (rebuilt && this._warmed) this._prewarm(false); // rotation / resize: build it all now, once
     }
     cam.worldDirToScreen(1, 0, this.screenFwd);
     let l = Math.hypot(this.screenFwd.x, this.screenFwd.y) || 1;
@@ -119,6 +160,37 @@ class FieldScene {
   /** Optional pixels-per-yard cap for this frame (0 = none). */
   _ppyCap() {
     return 0;
+  }
+
+  /** Pixels per yard at which a kick from `spotX` fits kicker + uprights (orientation-aware). */
+  _kickFit(d, spotX) {
+    if (d.orientation === 'landscape') return Math.max(1, Math.floor(d.w / (131 - spotX)));
+    const ins = this._insets();
+    return Math.max(1, Math.floor((d.h - ins.top - ins.bottom - 32) / (131.5 - spotX)));
+  }
+
+  /** The single wider field-goal framing (fits the longest kick; never below 70% of `normal`). */
+  _kickPpy(d, normal) {
+    return Math.min(normal, Math.max(Math.ceil(normal * 0.7), this._kickFit(d, VIEW.kickSpotMin)));
+  }
+
+  /**
+   * Pre-render the field for this framing (all crowd bob frames too) and the wider field-goal
+   * framing, while the scene is still static, so no frame stalls mid-play.
+   */
+  _prewarm(kick = true) {
+    this._warmed = true;
+    const cam = this.camera;
+    try {
+      prewarmSprites(this.userKit);
+      prewarmSprites(this.oppKit);
+      this.field.prepare(cam);
+      const normal = this._normalPpy || cam.ppy;
+      const kp = this._kickPpy(this.app.display, normal);
+      if (kick && kp < normal) this.field.prewarm({ orientation: cam.orientation, mirror: cam.mirror, ppy: kp, yScale: cam.yScale });
+    } catch (e) {
+      console.warn('field prewarm failed', e);
+    }
   }
 
   _ensureCrowd() {
@@ -142,6 +214,14 @@ class FieldScene {
       ctx.fillRect(0, 0, this.camera.viewW, this.camera.viewH);
       ctx.globalAlpha = a;
     }
+  }
+
+  /** Haptic pulse; small ones are rate-limited so rapid jukes / hits don't buzz continuously. */
+  _buzz(ms) {
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    if (ms < 30 && now - (this._buzzT || -1e9) < VIEW.buzzGapMs) return;
+    this._buzzT = now;
+    this.app.vibrate(ms);
   }
 
   /** CSS-px insets reserved by the HUD -> virtual px (reused object; `view.insets` may change live). */
@@ -178,6 +258,7 @@ export class PlayView extends FieldScene {
       oppLook: o.oppLook || (setup.defense && setup.defense.look),
     });
     this.setup = setup;
+    if (o.insets) lastPlayInsets = o.insets;
     this.onSnap = typeof o.onSnap === 'function' ? o.onSnap : null;
     this.sim = new PlaySim(setup);
     this.field.setTeams(this.userLook, this.oppLook); // own end zone behind, theirs ahead
@@ -208,11 +289,15 @@ export class PlayView extends FieldScene {
     this._rb = { x: 0, y: 0, z: 0 };
     this._pcx = 0;
     this._pcy = 0;
+    this._leanSide = -1;
+    this._aimLean = { x: 0, y: 0 };
+    this._ballLean = { x: 0, y: 0 };
     this._onPlayBuilt();
     this._viewport();
     this._cameraGoal(true);
     this._savePrev();
     this._ensureCrowd();
+    this._prewarm();
   }
 
   /** PlayResult once the whistle blows. */
@@ -284,14 +369,11 @@ export class PlayView extends FieldScene {
     this.app.sfx('click');
   }
 
-  /** Field goals / PATs: zoom out (a little) so the kicker and the uprights fit together. */
+  /** Field goals / PATs: zoom out (to the one wider framing) when the kicker and the uprights don't fit. */
   _ppyCap(d) {
     const sim = this.sim;
     if (!sim || !sim.kick || (sim.kind !== 'fg' && sim.kind !== 'pat')) return 0;
-    const spot = sim.kick.spotX;
-    if (d.orientation === 'landscape') return Math.max(1, Math.floor(d.w / (131 - spot)));
-    const ins = this._insets();
-    return Math.max(1, Math.floor((d.h - ins.top - ins.bottom - 32) / (131.5 - spot)));
+    return this._kickFit(d, sim.kick.spotX);
   }
 
   // ------------------------------------------------------------------ update
@@ -337,6 +419,7 @@ export class PlayView extends FieldScene {
       this._onWhistle(sim.result);
     }
     this._cameraGoal(false, dt);
+    this._updateLean(dt);
     this.fx.update(dt);
     if (this.bannerState) {
       this.bannerState.t += dt;
@@ -345,6 +428,60 @@ export class PlayView extends FieldScene {
     if (this.whistleT >= 0 && !this.done && this.time - this.whistleT >= this._beat) this.done = true;
     const ms = performance.now() - t0;
     this.stats.updateMs = this.stats.updateMs ? this.stats.updateMs * 0.95 + ms * 0.05 : ms;
+  }
+
+  // ------------------------------------------------------------------ lob lean
+
+  /**
+   * Screen px (per yard of height above the chord) a lob from (fx, fy) to (tx, ty) leans sideways.
+   * Height normally lifts the ball up the screen, which is invisible when the throw itself runs
+   * up the screen (portrait, or a landscape throw across the field): the lean bows the arc to the
+   * side so the lob reads. The side flips (with hysteresis) so the lean always adds to the visible
+   * bow (the throw's upward normal) instead of cancelling the lift.
+   */
+  _leanTarget(fx, fy, tx, ty, out) {
+    const cam = this.camera;
+    cam.worldDirToScreen(tx - fx, ty - fy, out);
+    const l = Math.hypot(out.x, out.y);
+    if (l < 1e-6) {
+      out.x = 0;
+      out.y = 0;
+      return out;
+    }
+    const ux = out.x / l;
+    const uy = out.y / l;
+    // lean toward the side where it adds to the up-the-screen lift (the throw's "upper" normal)
+    if (Math.abs(ux) > VIEW.leanFlip && Math.abs(uy) > 0.05) this._leanSide = ux * uy > 0 ? 1 : -1;
+    out.x = this._leanSide * VIEW.arcLean * Math.abs(uy) * cam.ppy;
+    out.y = 0;
+    return out;
+  }
+
+  _updateLean(dt) {
+    const sim = this.sim;
+    const aim = sim.phase === 'dropback' ? sim.aim : null;
+    const L = this._aimLean;
+    if (aim && !aim.runMode && sim.qb) {
+      this._leanTarget(sim.qb.x, sim.qb.y, aim.tx, aim.ty, Q);
+      const k = 1 - Math.exp(-14 * dt);
+      L.x += (Q.x - L.x) * k;
+      L.y += (Q.y - L.y) * k;
+    } else if (sim.phase !== 'air') {
+      L.x = 0;
+      L.y = 0;
+    }
+  }
+
+  /** Sideways screen offset of the flying ball (same lean as the arc it was thrown on). */
+  _ballDx(b, z) {
+    const sim = this.sim;
+    const lean = this._ballLean;
+    // passes only (a kickoff's 20-yd hang would swing the ball off the screen)
+    if (!lean.x || b.tipped || !(b.T > 0) || b.state !== 'air' || sim.kind !== 'scrimmage') return 0;
+    const f = clamp01((b.ft || 0) / b.T);
+    const zT = b.z0 + b.fvz * b.T - 0.5 * b.g * b.T * b.T;
+    const h = z - (b.z0 + (zT - b.z0) * f);
+    return h > 0 ? lean.x * h : 0;
   }
 
   _onPlayBuilt() {
@@ -419,6 +556,7 @@ export class PlayView extends FieldScene {
     let y = sim.by;
     let lead = 0.5;
     let rate = 5;
+    let rateY = 0;
     cam.marginX = 3;
     const b = sim.ball;
     if (sim.kind === 'fg' || sim.kind === 'pat') {
@@ -444,9 +582,15 @@ export class PlayView extends FieldScene {
       }
     } else if (sim.phase === 'presnap') {
       x = sim.losX;
-      y = sim.by;
       lead = Math.max(0.16, Math.min(0.42, VIEW.presnapBack[cam.orientation] / spanX));
       rate = 6;
+      // the whole formation across: QB / RB must show, receivers as far as possible
+      const qb = sim.qb;
+      const rb = sim.rb;
+      const lo = Math.min(sim.by, qb ? qb.y : sim.by, rb ? rb.y : sim.by) - 1;
+      const hi = Math.max(sim.by, qb ? qb.y : sim.by, rb ? rb.y : sim.by) + 1;
+      const r = this._receiverSpan(sim.by, sim.by);
+      y = this._fitCross(lo, hi, r.lo, r.hi, sim.by);
     } else if (sim.phase === 'return' || (sim.kind === 'kick_return' && !sim.carrier && sim.phase !== 'dead')) {
       const ko = sim.kickoff;
       const kr = sim.byId.KR;
@@ -462,18 +606,24 @@ export class PlayView extends FieldScene {
     } else if (sim.phase === 'dropback') {
       const qb = sim.qb;
       x = qb.x;
-      y = qb.y;
-      lead = VIEW.dropbackLead;
+      lead = VIEW.dropbackLead[cam.orientation] ?? 0.24;
       rate = 3;
+      rateY = 2.5;
       const aim = sim.aim;
       if (aim && !aim.runMode) {
+        // keep the QB and the landing spot on screen (clear of the HUD), downfield and across
         let c = qb.x + (0.5 - lead) * spanX;
-        c = Math.max(c, aim.tx - spanX / 2 + 4);
-        c = Math.min(c, qb.x + spanX / 2 - 5);
+        c = Math.max(c, aim.tx - this._aheadSpan() + 4);
+        c = Math.min(c, qb.x + this._behindSpan() - 4);
         x = c;
         lead = 0.5;
-        y = (qb.y * 2 + aim.ty) / 3;
         rate = 2.5;
+        const r = this._receiverSpan(Math.min(qb.y, aim.ty), Math.max(qb.y, aim.ty));
+        y = this._fitCross(Math.min(qb.y, aim.ty), Math.max(qb.y, aim.ty), r.lo, r.hi, aim.ty);
+      } else {
+        // before the aim: QB on screen, receivers (running their routes) as far as possible
+        const r = this._receiverSpan(qb.y, qb.y);
+        y = this._fitCross(qb.y - 1, qb.y + 1, r.lo, r.hi, qb.y);
       }
     } else if (sim.phase === 'air') {
       const lx = b.landX ?? b.x;
@@ -502,14 +652,117 @@ export class PlayView extends FieldScene {
       rate = 2;
     }
     const cx = x + (0.5 - lead) * spanX;
-    if (!portrait) {
-      // centre the action in the part of the screen the HUD doesn't cover
-      const ins = this._insets();
-      y -= (ins.top - ins.bottom) / 2 / (cam.ppy * cam.yScale);
+    // `y` is what should sit in the middle of the part of the screen the HUD doesn't cover
+    y -= this._crossOffset();
+    // the camera may look past a sideline / end line by as much as the HUD covers on that side
+    // (portrait: the scorebug sits over the far end zone, the button row over the near one)
+    const insv = this._insets();
+    if (cam.orientation === 'landscape') {
+      const k = cam.ppy * cam.yScale;
+      cam.marginY0 = cam.marginY + insv.top / k;
+      cam.marginY1 = cam.marginY + this._bottomInset() / k;
+      cam.marginX0 = null;
+      cam.marginX1 = null;
+    } else {
+      cam.marginY0 = null;
+      cam.marginY1 = null;
+      const isKick = sim.kind === 'fg' || sim.kind === 'pat';
+      cam.marginX0 = cam.marginX + this._bottomInset() / cam.ppy;
+      cam.marginX1 = isKick ? null : cam.marginX + insv.top / cam.ppy;
     }
     cam.leadFrac = 0.5;
     if (snap) cam.snapTo(cx, y);
-    else cam.follow(cx, y, dt, rate);
+    else if (rateY > 0) {
+      // separate (softer) cross-field rate: the framing re-balances as the aim sweeps, without lurching
+      const ty = cam.cy;
+      cam.follow(cx, y, dt, rate);
+      const k = 1 - Math.exp(-rateY * dt);
+      cam.cy = ty + (cam.ty - ty) * k;
+    } else cam.follow(cx, y, dt, rate);
+  }
+
+  /** HUD-free part of the screen along the cross-field axis, in yards, and its offset from centre. */
+  _crossBand() {
+    const cam = this.camera;
+    const ins = this._insets();
+    const k = cam.ppy * cam.yScale;
+    let a;
+    let b;
+    if (cam.orientation === 'landscape') {
+      a = ins.top;
+      b = this._bottomInset();
+    } else {
+      a = ins.left;
+      b = ins.right;
+    }
+    const full = cam.orientation === 'landscape' ? cam.viewH : cam.viewW;
+    const o = this._band || (this._band = { span: 0, off: 0 });
+    o.span = Math.max(4, (full - a - b) / k);
+    o.off = (a - b) / 2 / k;
+    return o;
+  }
+
+  /** World-y shift between the screen centre and the centre of the HUD-free band. */
+  _crossOffset() {
+    return this._crossBand().off;
+  }
+
+  /** Bottom HUD inset (virtual px): the button row only shows before the snap. */
+  _bottomInset() {
+    const ins = this._insets();
+    const sim = this.sim;
+    if (sim && sim.phase === 'presnap' && sim.kind === 'scrimmage') return ins.bottom;
+    return Math.min(ins.bottom, 6);
+  }
+
+  /** Yards visible from the screen centre to the downfield edge (clear of the HUD). */
+  _aheadSpan() {
+    const cam = this.camera;
+    const ins = this._insets();
+    if (cam.orientation === 'portrait') return (cam.viewH / 2 - ins.top) / cam.ppy;
+    return (cam.viewW / 2 - (cam.mirror ? ins.left : ins.right)) / cam.ppy;
+  }
+
+  /** Yards visible from the screen centre to the edge behind the play. */
+  _behindSpan() {
+    const cam = this.camera;
+    const ins = this._insets();
+    if (cam.orientation === 'portrait') return (cam.viewH / 2 - this._bottomInset()) / cam.ppy;
+    return (cam.viewW / 2 - (cam.mirror ? ins.right : ins.left)) / cam.ppy;
+  }
+
+  /** Cross-field extent of the pass-eligible players (merged with [lo, hi]). */
+  _receiverSpan(lo, hi) {
+    const sim = this.sim;
+    const o = this._rspan || (this._rspan = { lo: 0, hi: 0 });
+    o.lo = lo;
+    o.hi = hi;
+    for (const id of ['WR1', 'WR2', 'TE2', 'RB']) {
+      const e = sim.byId[id];
+      if (!e) continue;
+      if (e.y < o.lo) o.lo = e.y;
+      if (e.y > o.hi) o.hi = e.y;
+    }
+    return o;
+  }
+
+  /**
+   * Cross-field framing: the world y for the middle of the HUD-free band that keeps [lo, hi] on
+   * screen (with a margin) and shows as much of [nlo, nhi] as it can. When [lo, hi] can't fit,
+   * `pri` (e.g. the aim target) stays on screen and the rest gets as close as possible.
+   */
+  _fitCross(lo, hi, nlo, nhi, pri) {
+    const band = this._crossBand();
+    const half = band.span / 2;
+    const m = Math.min(VIEW.crossMargin, band.span * 0.1);
+    const minY = hi + m - half;
+    const maxY = lo - m + half;
+    const want = (Math.min(nlo, lo) + Math.max(nhi, hi)) / 2;
+    if (minY <= maxY) return Math.min(maxY, Math.max(minY, want));
+    // too wide for the margins: give up the margins before giving up either end
+    if (hi - lo <= band.span) return (lo + hi) / 2;
+    const m2 = Math.min(m, 1);
+    return Math.min(pri + half - m2, Math.max(pri - half + m2, (lo + hi) / 2));
   }
 
   // ------------------------------------------------------------------ events -> sfx / fx
@@ -526,8 +779,10 @@ export class PlayView extends FieldScene {
           break;
         case 'throw':
           app.sfx('throw');
-          app.vibrate(8);
+          this._buzz(8);
           this.throwTarget = ev.target || null;
+          this._ballLean.x = this._aimLean.x;
+          this._ballLean.y = this._aimLean.y;
           break;
         case 'catch':
           app.sfx('catch');
@@ -547,7 +802,7 @@ export class PlayView extends FieldScene {
           break;
         case 'juke':
           app.sfx('juke');
-          app.vibrate(6);
+          this._buzz(6);
           fx.burst(ev.x, ev.y, { kind: 'turf', n: 7 });
           break;
         case 'burn':
@@ -563,7 +818,7 @@ export class PlayView extends FieldScene {
           break;
         case 'truck_hit':
           app.sfx('hit', { power: 1 });
-          app.vibrate(35);
+          this._buzz(35);
           this.camera.shake(3, 0.3);
           fx.burst(ev.x, ev.y, { kind: 'hit', z: 1 });
           fx.pop(ev.x, ev.y, 'TRUCKED!', { color: '#ffd23a', size: 'small' });
@@ -574,7 +829,7 @@ export class PlayView extends FieldScene {
           break;
         case 'stiffarm':
           app.sfx('hit', { power: 0.6 });
-          app.vibrate(15);
+          this._buzz(15);
           fx.burst(ev.x, ev.y, { kind: 'hit', z: 1, n: 6 });
           fx.pop(ev.x, ev.y, 'STIFF ARM!', { color: '#ffd23a', size: 'small' });
           break;
@@ -589,7 +844,7 @@ export class PlayView extends FieldScene {
           const closing = C && d ? Math.hypot(C.vx - d.vx, C.vy - d.vy) : 6;
           const big = ev.type === 'sack' || closing >= VIEW.bigHit;
           app.sfx('hit', { power: big ? 1 : 0.7 });
-          app.vibrate(big ? 40 : 18);
+          this._buzz(big ? 40 : 18);
           fx.burst(ev.x, ev.y, { kind: 'hit', z: 0.9 });
           fx.burst(ev.x, ev.y, { kind: 'turf', n: 12 });
           if (big) this.camera.shake(2.5, 0.28);
@@ -607,14 +862,14 @@ export class PlayView extends FieldScene {
           break;
         case 'td':
           app.sfx('touchdown');
-          app.vibrate(60);
+          this._buzz(60);
           if (app.audio) app.audio.cheer(1, 3);
           fx.burst(ev.x, ev.y, { kind: 'confetti' });
           fx.flash('#ffffff', 0.22);
           break;
         case 'kick':
           app.sfx('kick');
-          app.vibrate(12);
+          this._buzz(12);
           fx.burst(ev.x, ev.y, { kind: 'turf', n: 8 });
           break;
         case 'doink':
@@ -722,11 +977,13 @@ export class PlayView extends FieldScene {
         break;
     }
     this._beat = this.opts.beat ?? (big ? VIEW.beatBig : VIEW.beat);
+    if (r.twoPoint && sub) sub = sub.replace(/^TOUCHDOWN!\s*/, ''); // the banner already says 2-PT
     // drop a subtitle that only repeats the banner ("PASS INCOMPLETE", "TOUCHBACK")
     const core = text.replace(/[^A-Z0-9 ]/g, '').trim();
     if (sub && text && sub.startsWith(text)) sub = sub.slice(text.length).trim();
     if (sub && core && sub.includes(core) && sub.length - core.length < 8) sub = '';
-    if (text) this.bannerState = { text, sub, color, band, t: 0, dur: Math.max(this._beat + 0.6, 1.6) };
+    // the banner fades out within the post-play beat (the view, and the banner, end with it)
+    if (text) this.bannerState = { text, sub, color, band, t: 0, dur: Math.max(0.5, this._beat) };
   }
 
   // ------------------------------------------------------------------ render
@@ -825,7 +1082,7 @@ export class PlayView extends FieldScene {
     const aim = sim.phase === 'dropback' ? sim.aim : null;
     if (aim && !aim.runMode && aim.path && aim.path.length > 1) {
       const n = this._aimCount(aim);
-      dotPath(ctx, cam, aim.path, { n, ground: true, color: '#000000', gap: aim.bullet ? 6 : 5, size: 2, alpha: 0.32, dash: aim.bullet ? 3 : 0 });
+      dotPath(ctx, cam, aim.path, { n, ground: true, color: '#000000', gap: aim.bullet ? 6 : 5, size: 2, alpha: 0.4, dash: aim.bullet ? 3 : 0 });
       if (aim.showMarker && aim.valid) landingMarker(ctx, cam, aim.tx, aim.ty, aim.bullet ? VIEW.bulletColor : '#ffffff', t, 12);
     }
     // ---- kick return: landing spot
@@ -927,7 +1184,7 @@ export class PlayView extends FieldScene {
       po.skin = skinOf(e);
       po.highlight = hl;
       po.time = this.time;
-      drawPlayer(ctx, P.x, P.y - lift, e.side === 'off' ? this.userLook : this.oppLook, po);
+      drawPlayer(ctx, P.x, P.y - lift, e.side === 'off' ? this.userKit : this.oppKit, po);
       if (holder === e) this._drawHeldBall(ctx, e, P.x, P.y - lift);
     }
   }
@@ -969,10 +1226,11 @@ export class PlayView extends FieldScene {
       } else if (aim.path && aim.path.length > 1) {
         const n = this._aimCount(aim);
         const alpha = aim.valid ? 1 : 0.45;
+        const lean = this._aimLean;
         if (aim.bullet) {
-          dotPath(ctx, cam, aim.path, { n, color: VIEW.bulletColor, gap: 7, dash: 4, size: 2, shadow: true, alpha, fadeTail: 10, phase: -t * 40 });
+          dotPath(ctx, cam, aim.path, { n, color: VIEW.bulletColor, gap: 7, dash: 4, size: 2, shadow: true, alpha, fadeTail: 10, phase: -t * 40, lean });
         } else {
-          dotPath(ctx, cam, aim.path, { n, color: VIEW.arcColor, gap: 5, size: 2, shadow: true, alpha, fadeTail: 12, phase: -t * 16 });
+          dotPath(ctx, cam, aim.path, { n, color: VIEW.arcColor, gap: 5, size: 2, shadow: true, alpha, fadeTail: 12, phase: -t * 16, lean });
         }
         if (aim.bullet) tagAbove(ctx, P.x, P.y, 'BULLET', VIEW.bulletColor, 34);
       }
@@ -1008,7 +1266,7 @@ export class PlayView extends FieldScene {
         const m = Math.max(2, Math.round(u * (k.path.length - 1)) + 1);
         dotPath(ctx, cam, k.path, { n: m, color: '#ffffff', gap: 6, size: 1, alpha: 0.5 });
       }
-      drawBall(ctx, P.x, P.y, r.z, { ppy: cam.ppy, spin: t, angle, spinning });
+      drawBall(ctx, P.x, P.y, r.z, { ppy: cam.ppy, spin: t, angle, spinning, dx: this._ballDx(b, r.z) });
     }
   }
 
@@ -1045,7 +1303,7 @@ export class PlayView extends FieldScene {
       let wy = ins.top + 2;
       if (cam.orientation === 'landscape') {
         if (this.screenFwd.x < 0) wx = vw - ins.right - ww - 2;
-      } else wy = vh - ins.bottom - 22;
+      } else wy = vh - this._bottomInset() - 22;
       windIcon(ctx, wx, wy, Q.x, Q.y, mph);
     }
     // banner
@@ -1060,25 +1318,91 @@ export class PlayView extends FieldScene {
         fromLeft: !this.camera.mirror,
       });
     }
-    // tips
+    // tips: along the bottom edge, behind the play (landscape: the side the offense comes from),
+    // so they never sit over the routes, the landing spot or the runner's path; faded while the
+    // finger is already doing what they describe
     const tip = this._tipText();
     if (tip) {
-      const ta = clamp01((t - this.phaseT - 0.35) / 0.25);
-      // landscape: low centre; portrait: under the HUD (the play happens in the lower half)
-      const portrait = cam.orientation === 'portrait' && !isKick;
-      const bottom = portrait ? ins.top + 8 + (tip.split('\n').length * 10 + 6) : vh - ins.bottom - Math.round(vh * 0.05);
-      if (ta > 0) tipBox(ctx, vw / 2, bottom, tip, ta, vw - 8);
+      let ta = clamp01((t - this.phaseT - 0.35) / 0.25);
+      const g = this.controller.g;
+      if (g && (g.mode === 'aim' || g.mode === 'carry')) ta *= 0.5;
+      if (ta > 0) {
+        const maxW = Math.min(vw - 8, cam.orientation === 'landscape' ? Math.round(vw * 0.46) : vw - 8);
+        const sz = tipSize(tip, maxW);
+        const at = this._tipSpot(tip, sz, isKick);
+        tipBox(ctx, Math.round(at.cx), Math.round(at.bottom), tip, ta, maxW);
+      }
     }
+  }
+
+  /**
+   * Where the tip box goes: one of a few edge slots (bottom / under the HUD; in landscape also
+   * behind or ahead of the play), whichever covers the least of what matters right now - the
+   * player you control, the aim target, the receivers, then everyone else. Re-evaluated a few
+   * times a second with hysteresis so the box doesn't hop around.
+   */
+  _tipSpot(text, sz, isKick) {
+    const cam = this.camera;
+    const vw = cam.viewW;
+    const vh = cam.viewH;
+    const ins = this._insets();
+    const bot = vh - this._bottomInset() - 3;
+    const top = ins.top + 3 + sz.h;
+    const st = this._tipState || (this._tipState = { text: '', slot: -1, t: -1, slots: [] });
+    const slots = st.slots;
+    slots.length = 0;
+    const half = sz.w / 2;
+    if (cam.orientation === 'landscape' && !isKick) {
+      const back = this.screenFwd.x >= 0 ? ins.left + 4 + half : vw - ins.right - 4 - half;
+      const front = this.screenFwd.x >= 0 ? vw - ins.right - 4 - half : ins.left + 4 + half;
+      slots.push({ cx: back, bottom: bot }, { cx: vw / 2, bottom: bot }, { cx: front, bottom: bot }, { cx: back, bottom: top }, { cx: front, bottom: top });
+    } else {
+      slots.push({ cx: vw / 2, bottom: bot });
+      if (!isKick) slots.push({ cx: vw / 2, bottom: top });
+    }
+    if (st.text !== text || st.slot < 0 || st.slot >= slots.length || this.time - st.t >= 0.25) {
+      const scores = slots.map((sl) => this._tipCover(sl.cx - half - 4, sl.bottom - sz.h - 4, sz.w + 8, sz.h + 8));
+      let best = 0;
+      for (let i = 1; i < scores.length; i++) if (scores[i] < scores[best] - 1e-6) best = i;
+      const keep = st.text === text && st.slot >= 0 && st.slot < scores.length && scores[st.slot] <= scores[best] + 1.5;
+      st.slot = keep ? st.slot : best;
+      st.text = text;
+      st.t = this.time;
+    }
+    return slots[st.slot];
+  }
+
+  /** How much important stuff a screen rect (virtual px) would hide. */
+  _tipCover(x, y, w, h) {
+    const sim = this.sim;
+    const cam = this.camera;
+    let score = 0;
+    const add = (wx, wy, wt, lift = 10) => {
+      cam.project(wx, wy, 0, P);
+      if (P.x >= x - 6 && P.x <= x + w + 6 && P.y - lift >= y - 4 && P.y - lift - 12 <= y + h) score += wt;
+    };
+    const ctl = sim.carrier || sim.byId[sim.controlledId] || (sim.phase === 'presnap' ? sim.qb : null);
+    for (const e of sim.players) {
+      let wt = 0.4;
+      if (e === ctl) wt = 8;
+      else if (sim.phase === 'presnap' && e.id === 'RB') wt = 5;
+      else if (e.side === 'off' && (e.pos === 'WR' || e.pos === 'TE' || e.pos === 'RB')) wt = sim.phase === 'carry' ? 0.6 : 2;
+      else if (e.side === 'def' && sim.phase === 'carry') wt = 1;
+      add(e.x, e.y, wt);
+    }
+    const aim = sim.phase === 'dropback' ? sim.aim : null;
+    if (aim && !aim.runMode) {
+      add(aim.tx, aim.ty, 5, 0);
+      add((aim.tx + sim.qb.x) / 2, (aim.ty + sim.qb.y) / 2, 2, 0);
+    }
+    if (sim.phase === 'return' && sim.kickoff && sim.kickoff.kicked) add(sim.kickoff.landX, sim.kickoff.landY, 5, 0);
+    return score;
   }
 
   _touchUI() {
     const lp = this.app.input && this.app.input.lastPointerType;
     if (lp) return lp === 'touch' || lp === 'pen';
-    try {
-      return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-    } catch {
-      return false;
-    }
+    return coarsePointer();
   }
 
   _tipText() {
@@ -1097,28 +1421,32 @@ export class PlayView extends FieldScene {
       if (k && k.stage === 'aim' && !k.aimLocked) return touch ? 'TAP AGAIN TO AIM\nAT THE POSTS' : 'CLICK OR SPACE AGAIN\nTO AIM AT THE POSTS';
       return null;
     }
+    const fwdKey = portrait ? 'W' : left ? 'A' : 'D';
+    const backKey = portrait ? 'S' : left ? 'D' : 'A';
+    const fwdSwipe = portrait ? 'UP' : left ? 'LEFT' : 'RIGHT';
+    const backSwipe = portrait ? 'DOWN' : left ? 'RIGHT' : 'LEFT';
     if (sim.phase === 'presnap') {
       if (c.snap >= N) return null;
-      return touch ? 'TAP THE RB TO RUN\nDRAG BACK TO PASS' : 'CLICK THE RB (OR H) TO RUN\nDRAG BACK (OR SPACE) TO PASS';
+      return touch ? `TAP THE RB TO RUN\nDRAG ${backSwipe} TO PASS` : 'CLICK THE RB (OR H) TO RUN\nDRAG BACK (OR SPACE) TO PASS';
     }
     if (sim.phase === 'dropback') {
       if (c.pass >= N) return null;
-      return touch ? 'PULL BACK TO AIM - LIFT TO THROW\n2ND FINGER: BULLET - PUSH PAST QB: RUN'
+      return touch ? 'PULL BACK TO AIM - LIFT TO THROW\n2ND FINGER: BULLET - SLIDE FORWARD: RUN'
         : 'DRAG AWAY FROM THE TARGET, RELEASE TO THROW\nRIGHT CLICK / B: BULLET - R: RUN';
     }
     if (sim.phase === 'return') {
       const ko = sim.kickoff;
       if (c.ret >= N || !ko || !ko.kicked || ko.landX >= 10) return null;
-      return touch ? 'SWIPE BACK FOR A TOUCHBACK' : 'BACK KEY FOR A TOUCHBACK';
+      return touch ? `SWIPE ${backSwipe} FOR A TOUCHBACK` : `${backKey} FOR A TOUCHBACK`;
     }
     if (sim.phase === 'carry' && this.controller._userCarrying()) {
       if (sim.kind === 'kick_return' && sim.carrier && sim.carrier.x < 10 && sim.cs && !sim.cs.leftEndZone && c.ret < N) {
-        return touch ? 'SWIPE BACK FOR A TOUCHBACK' : 'BACK KEY FOR A TOUCHBACK';
+        return touch ? `SWIPE ${backSwipe} FOR A TOUCHBACK` : `${backKey} FOR A TOUCHBACK`;
       }
       if (c.carry >= N) return null;
-      if (touch) return portrait ? 'SWIPE SIDEWAYS: JUKE - UP: DIVE\nHOLD: TRUCK' : 'SWIPE UP/DOWN: JUKE\nFORWARD: DIVE - HOLD: TRUCK';
+      if (touch) return portrait ? 'SWIPE SIDEWAYS: JUKE - UP: DIVE\nHOLD: TRUCK' : `SWIPE UP/DOWN: JUKE\n${fwdSwipe}: DIVE - HOLD: TRUCK`;
       if (portrait) return 'A/D: JUKE - W: DIVE - S: STUTTER\nHOLD SPACE: TRUCK';
-      return left ? 'W/S: JUKE - A: DIVE - D: STUTTER\nHOLD SPACE: TRUCK' : 'W/S: JUKE - D: DIVE - A: STUTTER\nHOLD SPACE: TRUCK';
+      return `W/S: JUKE - ${fwdKey}: DIVE - ${backKey}: STUTTER\nHOLD SPACE: TRUCK`;
     }
     return null;
   }
@@ -1139,8 +1467,8 @@ export class IdleFieldView extends FieldScene {
     this.firstDownX = Number.isFinite(o.firstDownX) ? o.firstDownX : null;
     this.flip = o.offense === 'opp';
     this.showPlayers = o.showPlayers !== false;
-    const offLook = this.flip ? this.oppLook : this.userLook;
-    const defLook = this.flip ? this.userLook : this.oppLook;
+    const offLook = this.flip ? this.oppKit : this.userKit;
+    const defLook = this.flip ? this.userKit : this.oppKit;
     this.offLook = offLook;
     this.defLook = defLook;
     this.field.setTeams(this.userLook, this.oppLook);
@@ -1160,6 +1488,10 @@ export class IdleFieldView extends FieldScene {
     this.camera.snapTo(this.losX, hy);
     this.hashY = hy;
     this._ensureCrowd();
+    // idle screens (drives, decisions) are the cheapest time to build the FG framing - once the
+    // HUD insets a kick will use are known
+    this.insets = o.insets || lastPlayInsets || null;
+    this._prewarm(!!this.insets);
   }
 
   update(dt) {

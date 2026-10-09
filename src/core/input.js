@@ -14,9 +14,13 @@
 //   {type:'swipe', x, y, dx, dy, dir, speed}  fast flick (also produces drag events before it)
 //   {type:'key', code, down:boolean, repeat:boolean}   keyboard / mapped gamepad buttons
 //   {type:'cancel'}                           pointer cancelled (e.g. OS gesture)
-//   {type:'pointer2', x, y, button}           a SECOND touch landed while the primary is held, or the
+//   {type:'pointer2', x, y, button, id}       a SECOND touch landed while the primary is held, or the
 //                                             right mouse button was pressed (alone or chorded with a
-//                                             held left button). Used for the bullet-pass toggle.
+//                                             held left button). Used for the bullet-pass toggle, and
+//                                             (with move2 / up2) to let a second thumb take over a
+//                                             carrier gesture while the first one still rests.
+//   {type:'move2', x, y, id} / {type:'up2', x, y, id}   a secondary touch moved / lifted (`id` matches
+//                                             its pointer2)
 // Presses that start on HUD controls (button, a, input, select, label, .interactive) are ignored
 // so tapping a HUD button never doubles as an on-field tap. `down` events also carry
 // `pointerType` ('touch'|'mouse'|'pen'), and `pointer.type` / `lastPointerType` keep the latest.
@@ -56,7 +60,10 @@ export class Input {
     window.addEventListener('keydown', (e) => this._key(e, true));
     window.addEventListener('keyup', (e) => this._key(e, false));
     window.addEventListener('blur', () => {
+      // release everything that was held (a held Space must not keep trucking after alt-tab)
+      for (const code of this.keys) this._push({ type: 'key', code, down: false, repeat: false });
       this.keys.clear();
+      for (const id of [...this._extra]) this._cancel({ pointerId: id });
       if (this.pointer.down) this._cancel({ pointerId: this.pointer.id });
     });
   }
@@ -94,10 +101,12 @@ export class Input {
       // a second finger while the primary is held
       if (e.pointerId !== this.pointer.id && !this._extra.has(e.pointerId)) {
         this._extra.add(e.pointerId);
+        try { this.el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         const { x, y } = this._pos(e);
-        this._push({ type: 'pointer2', x, y, button: 0 });
+        this._push({ type: 'pointer2', x, y, button: 0, id: e.pointerId });
+        e.preventDefault?.();
       }
-      return; // primary pointer only
+      return; // gestures / taps / swipes come from the primary pointer
     }
     if (e.button !== undefined && e.button > 0) return;
     const { x, y } = this._pos(e);
@@ -105,13 +114,17 @@ export class Input {
     const p = this.pointer;
     Object.assign(p, { down: true, id: e.pointerId, x, y, startX: x, startY: y, startT: performance.now(), dragging: false, type: e.pointerType || '' });
     p.history = [{ x, y, t: p.startT }];
-    this._push({ type: 'down', x, y, pointerType: e.pointerType || '' });
+    this._push({ type: 'down', x, y, pointerType: e.pointerType || '', id: e.pointerId });
     e.preventDefault?.();
   }
 
   _move(e) {
     const p = this.pointer;
     const { x, y } = this._pos(e);
+    if (this._extra.has(e.pointerId)) {
+      this._push({ type: 'move2', x, y, id: e.pointerId });
+      return;
+    }
     if (!p.down || e.pointerId !== p.id) {
       p.x = x; p.y = y; // hover position for mouse aiming
       return;
@@ -133,7 +146,11 @@ export class Input {
 
   _up(e) {
     const p = this.pointer;
-    this._extra.delete(e.pointerId);
+    if (this._extra.delete(e.pointerId)) {
+      const { x, y } = this._pos(e);
+      this._push({ type: 'up2', x, y, id: e.pointerId });
+      return;
+    }
     if (!p.down || e.pointerId !== p.id) return;
     const { x, y } = this._pos(e);
     const now = performance.now();
@@ -165,7 +182,10 @@ export class Input {
 
   _cancel(e) {
     const p = this.pointer;
-    if (e.pointerId !== undefined) this._extra.delete(e.pointerId);
+    if (e.pointerId !== undefined && this._extra.delete(e.pointerId)) {
+      this._push({ type: 'up2', x: p.x, y: p.y, id: e.pointerId, cancel: true });
+      return;
+    }
     if (!p.down || (e.pointerId !== undefined && e.pointerId !== p.id)) return;
     p.down = false;
     p.dragging = false;

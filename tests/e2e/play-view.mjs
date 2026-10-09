@@ -4,6 +4,11 @@
 // hold -> truck, slingshot drag -> aim downfield, 2nd finger / right-click -> bullet, release ->
 // throw, collapse -> QB run, FG two taps, kick return + touchback, post-play skip, audible, pause,
 // resize mid-play. Screenshots -> test-results/pv-<config>-<step>.png. Measures frame time.
+// QA regressions (gameplay-feel pass): sloppy RB tap still hands off, a second thumb takes over a
+// carrier gesture, the FG arrow starts at an edge and a second-thumb tap locks it, the truck hold
+// counts from the catch, lob arcs lean in portrait, HUD-aware aim framing at both sidelines, tips
+// never cover the QB, banners fade within the beat, on-field kits, field pre-warm, rotation
+// mid-aim cancels the throw, blur releases held keys, haptics are throttled.
 // Exit code 0 = all passed.
 //
 //   node tests/e2e/play-view.mjs            # all configs
@@ -52,9 +57,15 @@ for (const cfg of CONFIGS) {
         result: v.result ? v.result.outcome : null, done: v.done,
         truck: s.carrierState ? s.carrierState.truckHeld : null,
         fwd: v.screenFwd, lat: v.screenLat,
+        g: v.controller.g ? `${v.controller.g.mode}${v.controller.g.sec ? '/2nd' : ''}` : '-',
       };
     });
-    const newPlay = (over) => S((o) => { window.__app.current.newPlay(o); }, over || {});
+    // every seeded play starts from the same drive spot (earlier plays must not shift later ones)
+    const newPlay = (over) => S((o) => {
+      const sb = window.__app.current;
+      sb.drive = { losX: sb.startLos, down: 1, firstDownX: sb.startLos + 10, hashY: 160 / 6 };
+      sb.newPlay(o);
+    }, over || {});
     const setKind = (kind) => S((k) => { const sb = window.__app.current; sb.kind = k; sb.newPlay(); }, kind);
     const waitFor = (fn, arg, timeout = 8000) => page.waitForFunction(fn, arg, { timeout, polling: 16 }).then(() => true, () => false);
 
@@ -117,6 +128,9 @@ for (const cfg of CONFIGS) {
     st = await view();
     check(C, 'tap RB -> handoff (RB controlled, phase carry)', st.phase === 'carry' && st.ctl === 'RB' && st.log.includes('handoff'), `${st.phase} ${st.ctl}`);
     await waitFor(() => !!window.__app.current.view.sim.carrier, null, 2000);
+    // keep the defense on the turf for a few seconds so a quick tackle can't race the checks below
+    // (a press after the whistle would skip into the next play)
+    await S(() => { for (const e of window.__app.current.view.sim.players) if (e.side === 'def') { e.down = true; e.ai.downUntil = 4; } });
     await wait(150);
     await shot(`pv-${C}-02-run`);
     // lateral swipe toward world -y (screen -lat)
@@ -124,7 +138,7 @@ for (const cfg of CONFIGS) {
     await wait(60);
     st = await view();
     const juked = st.ev.includes('juke') || st.result;
-    check(C, 'lateral flick -> sideStep (juke event)', st.ev.includes('juke'), `${st.log.join(',')} ${st.result || ''}`);
+    check(C, 'lateral flick -> sideStep (juke event)', st.ev.includes('juke'), `${st.log.join(',')} ${st.result || ''} phase ${st.phase} gesture ${st.g} ev ${st.ev.slice(-4).join(',')}`);
     await shot(`pv-${C}-03-juke`);
     if (!st.result) {
       // press-and-hold -> truck
@@ -308,6 +322,259 @@ for (const cfg of CONFIGS) {
     st = await view();
     check(C, 'kick return: returner jukes after the catch', st.ev.includes('juke') || !!st.result, st.log.join(','));
     await shot(`pv-${C}-16-return-run`);
+
+    // ---------------------------------------------------------------- QA regressions (feel pass)
+    await S(() => { window.__app.current.kind = 'scrimmage'; });
+    const freezeDefense = (until = 6) => S((u) => { for (const e of window.__app.current.view.sim.players) if (e.side === 'def') { e.down = true; e.ai.downUntil = u; } }, until);
+    if (touchMode) {
+      // a sloppy tap on the RB (the finger travels ~15 px) still hands off
+      await newPlay({ seed: 21 });
+      await wait(250);
+      const rb2 = await S(() => window.__app.current.view.screenPos('RB'));
+      await touch('touchStart', [{ x: rb2.x, y: rb2.y, id: 1 }]);
+      await wait(30);
+      await touch('touchMove', [{ x: rb2.x + 9, y: rb2.y + 7, id: 1 }]);
+      await wait(30);
+      await touch('touchMove', [{ x: rb2.x + 12, y: rb2.y + 9, id: 1 }]);
+      await wait(30);
+      await touch('touchEnd', [{ x: rb2.x + 12, y: rb2.y + 9, id: 1 }]);
+      await wait(80);
+      st = await view();
+      check(C, 'sloppy RB tap (15 px of finger travel) still hands off', st.log.includes('handoff') && !st.log.includes('dropBack'), st.log.join(','));
+      // two thumbs: one rests (and trucks), the other swipes -> the swipe is not swallowed
+      await waitFor(() => !!window.__app.current.view.sim.carrier, null, 2000);
+      await freezeDefense();
+      const A = { x: cx - L.x * 70, y: cy - L.y * 70 };
+      const B = { x: cx + L.x * 70, y: cy + L.y * 70 };
+      await touch('touchStart', [{ ...A, id: 1 }]);
+      await wait(420);
+      const rest = await view();
+      await touch('touchStart', [{ ...A, id: 1 }, { ...B, id: 2 }]);
+      for (let i = 1; i <= 4; i++) {
+        await wait(20);
+        await touch('touchMove', [{ ...A, id: 1 }, { x: B.x - L.x * 9 * i, y: B.y - L.y * 9 * i, id: 2 }]);
+      }
+      await wait(60);
+      st = await view();
+      await touch('touchEnd', [{ x: B.x - L.x * 36, y: B.y - L.y * 36, id: 2 }]);
+      await touch('touchEnd', [{ ...A, id: 1 }]);
+      check(C, 'resting thumb trucks; a second thumb\'s swipe takes over (juke, truck released)', rest.truck === true && st.ev.includes('juke') && st.truck === false, `rest ${rest.truck} ${st.log.join(',')} truck ${st.truck}`);
+    }
+    // a zigzag in ONE touch (pausing at each turn) gives one juke per stroke, with diminishing
+    // returns (MECHANICS 3.1: x1.0, 0.7, 0.5, 0.35)
+    await newPlay({ seed: 21 });
+    await wait(250);
+    await S(() => window.__app.current.view.sim.handoff());
+    await waitFor(() => !!window.__app.current.view.sim.carrier, null, 2000);
+    await freezeDefense(30);
+    await press(cx, cy);
+    let zx = cx;
+    let zy = cy;
+    for (const d of [1, -1, 1, -1]) {
+      for (let k = 0; k < 3; k++) { zx += d * L.x * 9; zy += d * L.y * 9; await moveTo(zx, zy); await wait(18); }
+      await wait(260);
+    }
+    await lift(zx, zy);
+    await wait(80);
+    const effs = await S(() => window.__app.current.view.sim.eventLog.filter((e) => e.type === 'juke').map((e) => e.eff));
+    check(C, 'zigzag in one touch (pauses at the turns): 4 jukes, diminishing 1/.7/.5/.35', effs.length === 4 && effs[0] === 1 && effs[1] < 1 && effs[3] < effs[2], JSON.stringify(effs));
+    // FG: the arrow starts at an edge (no reflexive double-tap centre), a 2nd-thumb tap locks it
+    await S(() => { const sb = window.__app.current; sb.kind = 'fg'; sb.fgDist = 30; sb.newPlay(); });
+    await wait(200);
+    await waitFor(() => window.__app.current.view.sim.kick.power > 0.9, null, 4000);
+    if (touchMode) await touch('touchStart', [{ x: cx, y: cy, id: 1 }]);
+    else await page.mouse.click(cx, cy);
+    await wait(30);
+    const edge = await S(() => window.__app.current.view.sim.kick.aim);
+    check(C, 'FG aim arrow starts at an edge, swinging in', Math.abs(edge) > 0.6, `aim ${edge.toFixed(2)}`);
+    if (touchMode) {
+      await wait(120);
+      await touch('touchStart', [{ x: cx, y: cy, id: 1 }, { x: cx + 60, y: cy + 60, id: 2 }]);
+      await wait(40);
+      const lk = await S(() => window.__app.current.view.sim.kick.aimLocked);
+      await touch('touchEnd', [{ x: cx + 60, y: cy + 60, id: 2 }]);
+      await touch('touchEnd', [{ x: cx, y: cy, id: 1 }]);
+      check(C, 'FG: a tap with the other thumb (first still down) locks the aim', lk === true);
+    } else {
+      await page.keyboard.press('Space');
+      await wait(40);
+    }
+    await waitFor(() => !!window.__app.current.view.result, null, 6000);
+    const bn = await S(() => { const v = window.__app.current.view; return v.bannerState ? { dur: v.bannerState.dur, beat: v._beat } : null; });
+    check(C, 'result banner fades out within the post-play beat (no abrupt cut)', !!bn && bn.dur <= bn.beat + 1e-6, JSON.stringify(bn));
+    if (touchMode) {
+      // a finger resting through the kick-return catch only trucks once held from the catch on
+      await S(() => { window.__app.current.kind = 'kick_return'; });
+      await newPlay({ seed: seeds.short });
+      await waitFor(() => window.__app.current.view.sim.kickoff.kicked, null, 3000);
+      await touch('touchStart', [{ x: cx, y: cy, id: 1 }]);
+      await waitFor(() => !!window.__app.current.view.sim.carrier, null, 8000);
+      const early = await S(() => window.__app.current.view.sim.carrierState.truckHeld);
+      await wait(450);
+      const late = await S(() => { const v = window.__app.current.view; return v.result ? 'over' : v.sim.carrierState.truckHeld; });
+      await touch('touchEnd', [{ x: cx, y: cy, id: 1 }]);
+      check(C, 'kick return: resting finger does not truck at the catch, only after a hold', early === false && (late === true || late === 'over'), `early ${early} late ${late}`);
+      await S(() => { window.__app.current.kind = 'scrimmage'; });
+    }
+    // aiming at either sideline keeps the target and the QB on screen, clear of a HUD bar
+    await S(() => { window.__app.current.kind = 'scrimmage'; });
+    for (const side of ['far', 'near']) {
+      await newPlay({ seed: 51 });
+      await S(() => { window.__app.current.view.insets = { top: 52, bottom: 50, left: 8, right: 8 }; }); // ~ the match HUD
+      await wait(200);
+      await freezeDefense();
+      const sx2 = cx;
+      const sy2 = cy;
+      await stroke(sx2, sy2, sx2 - F.x * 30, sy2 - F.y * 30, 80, 4, true);
+      await wait(150);
+      const want = await S((side) => {
+        const v = window.__app.current.view;
+        const s = v.sim;
+        const d = v.app.display;
+        const k = d.dpr / d.scale;
+        const comfort = Math.max(130, Math.min(300, Math.min(d.cssW, d.cssH) * 0.42));
+        const scale = s.maxThrowDist() / ((comfort * k) / v.camera.ppy);
+        const tx = s.qb.x + 18;
+        const ty = side === 'far' ? 2.5 : 160 / 3 - 2.5;
+        const o = v.camera.worldDirToScreen((s.qb.x - tx) / scale, (s.qb.y - ty) / scale);
+        return { dx: o.x / k, dy: o.y / k };
+      }, side);
+      for (let i = 1; i <= 6; i++) { await moveTo(sx2 + want.dx * i / 6, sy2 + want.dy * i / 6); await wait(30); }
+      await wait(1500);
+      const fr = await S(() => {
+        const v = window.__app.current.view;
+        const s = v.sim;
+        if (!s.aim) return { phase: s.phase };
+        const c = v.camera;
+        const ins = v._insets();
+        const t = c.toScreen(s.aim.tx, s.aim.ty, 0);
+        const q = c.toScreen(s.qb.x, s.qb.y, 0);
+        const land = c.orientation === 'landscape';
+        const inBand = (p) => p.x >= 0 && p.x <= c.viewW && p.y >= (land ? ins.top : 0) && p.y <= c.viewH;
+        return { target: inBand(t), qb: inBand({ x: q.x, y: q.y - 12 }) && inBand(q), t: [Math.round(t.x), Math.round(t.y)], q: [Math.round(q.x), Math.round(q.y)], top: ins.top, ty: +s.aim.ty.toFixed(1) };
+      });
+      await shot(`pv-${C}-18-aim-${side}-sideline`);
+      check(C, `aim at the ${side} sideline: target clear of the HUD and the QB both on screen`, fr.target && fr.qb, JSON.stringify(fr));
+      if (side === 'near') {
+        // the tip box (pass tips still showing) never sits on the QB
+        const tipq = await S(async () => {
+          const v = window.__app.current.view;
+          const { tipSize } = await import('/src/play/view/overlay.js');
+          const text = v._tipText();
+          if (!text) return { none: true };
+          const sz = tipSize(text, v.camera.viewW - 8);
+          const at = v._tipSpot(text, sz, false);
+          const q = v.camera.toScreen(v.sim.qb.x, v.sim.qb.y, 0);
+          const x0 = at.cx - sz.w / 2;
+          const y0 = at.bottom - sz.h;
+          const hit = q.x > x0 - 6 && q.x < x0 + sz.w + 6 && q.y > y0 && q.y - 22 < at.bottom;
+          return { hit, slot: v._tipState.slot };
+        });
+        check(C, 'control tip is placed off the QB', tipq.none || !tipq.hit, JSON.stringify(tipq));
+      }
+      await lift(sx2 + want.dx, sy2 + want.dy);
+      await wait(100);
+    }
+    // goal-line framing: on a 2-pt try the whole end zone (to the end line) stays clear of the HUD
+    await S(() => { const sb = window.__app.current; sb.kind = 'two_point'; sb.newPlay({ seed: 5 }); sb.view.insets = { top: 60, bottom: 50, left: 8, right: 8 }; });
+    await wait(900);
+    const gl = await S(() => {
+      const v = window.__app.current.view;
+      const c = v.camera;
+      const ins = v._insets();
+      const back = c.toScreen(119.5, 160 / 6, 0);
+      const land = c.orientation === 'landscape';
+      return { ok: land ? back.x >= 0 && back.x <= c.viewW : back.y >= ins.top, y: Math.round(back.y), top: ins.top };
+    });
+    await shot(`pv-${C}-19-goal-line`);
+    check(C, 'goal-line framing: the end line is on screen, clear of the HUD', gl.ok, JSON.stringify(gl));
+    await S(() => { window.__app.current.kind = 'scrimmage'; });
+    // portrait: a straight-downfield lob bows sideways off its ground shadow; landscape: no lean
+    await newPlay({ seed: 52 });
+    await wait(150);
+    await freezeDefense();
+    const lean = await S(async () => {
+      const v = window.__app.current.view;
+      const s = v.sim;
+      s.dropBack();
+      for (let i = 0; i < 30; i++) { s.update(1 / 60); s.aimAt(s.qb.x + 35, s.qb.y); v._updateLean(1 / 60); }
+      const p = s.aim.path;
+      const mid = p[Math.floor(p.length / 2)];
+      const c = v.camera;
+      const g = c.toScreen(mid.x, mid.y, 0);
+      const z0 = p[0].z;
+      const z1 = p[p.length - 1].z;
+      const h = mid.z - (z0 + (z1 - z0) * 0.5);
+      return { lean: v._aimLean.x, ppy: c.ppy, bowPx: Math.abs(v._aimLean.x * h), o: c.orientation, gx: g.x };
+    });
+    if (lean.o === 'portrait') check(C, 'portrait lob arc leans sideways off its shadow (height reads)', lean.bowPx > 6, JSON.stringify(lean));
+    else check(C, 'landscape downfield lob has no sideways lean', Math.abs(lean.lean) < 0.2 * lean.ppy, JSON.stringify(lean));
+    await S(() => window.__app.current.view.sim.aimCancel());
+    // rotating mid-aim cancels the drag instead of throwing somewhere unintended on lift
+    await newPlay({ seed: 53 });
+    await wait(150);
+    await freezeDefense();
+    await stroke(cx, cy, cx - F.x * 70 + L.x * 20, cy - F.y * 70 + L.y * 20, 120, 5, true);
+    await wait(120);
+    const pre = await view();
+    await page.setViewportSize({ width: vp.height, height: vp.width });
+    await wait(350);
+    await lift(cx, cy);
+    await wait(120);
+    st = await view();
+    await page.setViewportSize(vp);
+    await wait(300);
+    check(C, 'rotation mid-aim cancels the aim (no throw on lift)', pre.phase === 'dropback' && !!pre.aim && st.phase === 'dropback' && !st.ev.includes('throw'), `${pre.phase} -> ${st.phase} ${st.ev.join(',')}`);
+    if (!touchMode) {
+      // window blur releases a held key (Space truck)
+      await newPlay({ seed: 31 });
+      await wait(200);
+      await page.keyboard.press('KeyH');
+      await waitFor(() => !!window.__app.current.view.sim.carrier, null, 2000);
+      await freezeDefense();
+      await page.keyboard.down('Space');
+      await wait(60);
+      const held = await view();
+      await S(() => window.dispatchEvent(new Event('blur')));
+      await wait(60);
+      st = await view();
+      await page.keyboard.up('Space');
+      check(C, 'window blur releases a held Space (truck off)', held.truck === true && st.truck === false, `${held.truck} -> ${st.truck}`);
+    }
+    // kits, field pre-warm, haptic throttle, audio limiter
+    const misc = await S(async () => {
+      const app = window.__app;
+      const v = app.current.view;
+      const { fieldKit, kitDistance, KIT } = await import('/src/render/sprites.js');
+      const { FIELD_COLORS } = await import('/src/render/field.js');
+      const turf = [FIELD_COLORS.turfA, FIELD_COLORS.turfB];
+      const atl = fieldKit({ primary: '#2e8b3a', secondary: '#c8c8c8', helmet: '#c8c8c8' }, turf);
+      const por = fieldKit({ primary: '#2d6a4f', secondary: '#e9c46a', helmet: '#2d6a4f' }, turf);
+      const home = fieldKit({ primary: '#c62828', secondary: '#202020', helmet: '#202020' }, turf);
+      const away = fieldKit({ primary: '#b3122e', secondary: '#f0f0f0', helmet: '#b3122e' }, turf, home);
+      const kits = {
+        turf: Math.min(...turf.map((t) => kitDistance(atl.primary, t))) >= KIT.turf && Math.min(...turf.map((t) => kitDistance(por.helmet, t))) >= KIT.turf,
+        clash: kitDistance(home.primary, away.primary) >= KIT.clash,
+      };
+      const f = v.field;
+      const entries = [...f._cache.values()];
+      const crowdBuilt = entries.length > 0 && entries.every((e) => e.crowd.every((s) => s.frames.every(Boolean)));
+      const normal = v._normalPpy || v.camera.ppy;
+      const kp = v._kickPpy(app.display, normal);
+      const kickKey = [...f._cache.keys()].some((k) => k.split('|')[2] === String(kp));
+      let n = 0;
+      const orig = app.vibrate;
+      app.vibrate = () => { n++; };
+      for (let i = 0; i < 5; i++) v._buzz(6);
+      const small = n;
+      v._buzz(40);
+      app.vibrate = orig;
+      return { kits, crowdBuilt, kickKey, kp, normal, small, big: n - small, limiter: !app.audio.ctx || !!app.audio.limiter };
+    });
+    check(C, 'on-field kits: turf-coloured jerseys/helmets switch, look-alike sides split', misc.kits.turf && misc.kits.clash, JSON.stringify(misc.kits));
+    check(C, 'field pre-warmed: all crowd frames + the field-goal framing cached before play', misc.crowdBuilt && misc.kickKey, `crowd ${misc.crowdBuilt} kick ppy ${misc.kp}/${misc.normal} cached ${misc.kickKey}`);
+    check(C, 'haptics: rapid small pulses are throttled, big ones always buzz', misc.small === 1 && misc.big === 1, `${misc.small}/${misc.big}`);
+    check(C, 'audio master bus has a limiter', misc.limiter);
 
     // ---------------------------------------------------------------- pause, frame time, resize
     await S(() => { window.__app.current.kind = 'scrimmage'; });
