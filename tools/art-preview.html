@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pocket Gridiron Art Preview</title>
+  <style>
+    :root {
+      --bg: #0e1118;
+      --panel: #161b26;
+      --line: #2a3246;
+      --ink: #e9e4d4;
+      --dim: #8f97a8;
+      --accent: #ffcc33;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+    #live { position: relative; width: 100vw; height: 100vh; height: 100dvh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    #liveBox { position: relative; width: 100%; height: 100%; }
+    #live.force-portrait #liveBox { height: 100%; width: auto; aspect-ratio: 9 / 19.5; max-width: 100%; }
+    #live.force-landscape #liveBox { width: 100%; height: auto; aspect-ratio: 19.5 / 9; max-height: 100%; }
+    #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+    .bar { position: absolute; left: 8px; top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; z-index: 2; }
+    .bar button, .bar label { background: rgba(16, 18, 26, 0.85); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 6px 9px; font: inherit; font-size: 12px; cursor: pointer; min-height: 32px; }
+    .bar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+    .bar input[type=range] { width: 120px; vertical-align: middle; }
+    #stats { position: absolute; right: 8px; bottom: 8px; z-index: 2; font-size: 11px; color: var(--dim); background: rgba(16, 18, 26, 0.75); padding: 3px 6px; border-radius: 3px; }
+    main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+    h2 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 28px 0 8px; }
+    p.note { color: var(--dim); margin: 0 0 10px; font-size: 12px; }
+    .sheet { display: block; image-rendering: pixelated; image-rendering: crisp-edges; margin: 0 0 12px; background: #000; }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+  </style>
+</head>
+<body>
+  <section id="live">
+    <div id="liveBox"><canvas id="view" aria-label="Live field preview"></canvas></div>
+    <div class="bar" id="bar">
+      <button type="button" data-o="auto">Auto</button>
+      <button type="button" data-o="landscape">Landscape</button>
+      <button type="button" data-o="portrait">Portrait</button>
+      <label>yard <input id="yard" type="range" min="0" max="120" step="1"></label>
+      <button type="button" id="pause" aria-pressed="false">Pause</button>
+    </div>
+    <div id="stats"></div>
+  </section>
+  <main id="gallery">
+    <h2>Players: facings x animations</h2>
+    <p class="note">Columns: right / left / up (back) / down (front); each block shows every frame. Rows on alternating turf stripes to check contrast.</p>
+    <div id="players"></div>
+    <h2>Skin tones and highlight markers</h2>
+    <div id="skins"></div>
+    <h2>Ball</h2>
+    <div id="balls"></div>
+    <h2>Font</h2>
+    <div id="fonts"></div>
+    <h2>Field overview</h2>
+    <div class="row" id="fields"></div>
+  </main>
+  <script type="module" src="./art-preview.js"></script>
+</body>
+</html>
